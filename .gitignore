@@ -23,6 +23,5 @@ go.work.sum
 
 # env file
 .env
-wrangler
 report_dir
 ip_addresses.txt
