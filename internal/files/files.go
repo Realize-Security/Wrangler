@@ -3,6 +3,7 @@ package files
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -27,4 +28,33 @@ func FileLinesToSlice(path string) ([]string, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func CreateDir(dirPath string) error {
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		errDir := os.Mkdir(dirPath, 0755)
+		if errDir != nil {
+			return errDir
+		}
+		log.Printf("Directory created: %s\n", dirPath)
+	} else {
+		log.Printf("Directory already exists: %s\n", dirPath)
+	}
+	return nil
+}
+
+func WriteFile(fullPath string, content []string) error {
+	file, err := os.Create(fullPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for _, line := range content {
+		_, err := file.WriteString(line + "\n")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
