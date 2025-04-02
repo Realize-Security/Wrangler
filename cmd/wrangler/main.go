@@ -127,15 +127,36 @@ func main() {
 
 	}()
 
+	errCh := make(chan error, 1)
+
 	// Drain worker responses
 	for _, w := range project.Workers {
 		w := w
 		go func() {
 			for resp := range w.WorkerResponse {
+				// Log everything
 				log.Printf("[Worker %d] %s\n", w.ID, resp)
+
+				// If it includes "error:" or some known substring, treat it as a fatal error
+				if strings.Contains(resp, " error: ") {
+					errCh <- fmt.Errorf("worker %d failed: %s", w.ID, resp)
+				}
 			}
 		}()
 	}
+	go func() {
+		// The moment we see an error from any worker, stop everything
+		err := <-errCh
+		log.Printf("FATAL: %v", err)
+
+		// Force all workers to stop
+		for _, w := range project.Workers {
+			if w.CancelFunc != nil {
+				w.CancelFunc()
+			}
+			w.UserCommand <- wrangler.WorkerStop
+		}
+	}()
 
 	// 4. Wait until all workers finish
 	wg.Wait()
