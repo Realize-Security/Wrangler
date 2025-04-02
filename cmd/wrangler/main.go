@@ -3,6 +3,7 @@ package main
 import (
 	"Wrangler/internal/files"
 	"Wrangler/internal/wrangler"
+	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/validators"
 	"fmt"
@@ -96,7 +97,7 @@ func main() {
 		}
 	}
 
-	reportPath, err := createReportDirectory(cli.Output)
+	reportPath, err := createReportDirectory(cli.Output, cli.ProjectName)
 	if err != nil {
 		fmt.Printf(err.Error())
 		return
@@ -203,14 +204,14 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 	return fullPath, nil
 }
 
-func createReportDirectory(outputDir string) (string, error) {
+func createReportDirectory(outputDir, projectName string) (string, error) {
 	var reportPath string
 	if outputDir != "" {
 		wd, err := os.Getwd()
 		if err != nil {
 			log.Fatal(err)
 		}
-		reportPath = path.Join(wd, outputDir)
+		reportPath = path.Join(wd, outputDir, helpers.SpacesToUnderscores(projectName))
 
 		_, err = os.Stat(reportPath)
 		if err != nil {

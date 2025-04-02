@@ -1,12 +1,12 @@
 package wrangler
 
 import (
+	"Wrangler/pkg/helpers"
 	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
 	"path"
-	"strings"
 	"sync"
 	"time"
 )
@@ -44,7 +44,6 @@ type WranglerRepository interface {
 	NewProject(name, inScope, excludeScope, reportDir string) *Project
 	ProjectInit(project *Project)
 	StartWorkers(project *Project) *sync.WaitGroup
-	reportName(description string) string
 }
 
 type wranglerRepository struct{}
@@ -91,7 +90,7 @@ func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {
 			w.Args = append(w.Args, project.ExcludeScopeFile)
 		}
 
-		reportName := wr.reportName(w.Description)
+		reportName := helpers.SpacesToUnderscores(w.Description)
 		workerReport := path.Join(project.ReportDir, reportName)
 		w.Args = append(w.Args, "-oA")
 		w.Args = append(w.Args, workerReport)
@@ -148,9 +147,4 @@ func runCommand(ctx context.Context, cmdName string, args []string) (string, err
 
 	err := cmd.Run()
 	return out.String(), err
-}
-
-func (wr *wranglerRepository) reportName(description string) string {
-	description = strings.ToLower(description)
-	return strings.Replace(description, " ", "_", -1)
 }
