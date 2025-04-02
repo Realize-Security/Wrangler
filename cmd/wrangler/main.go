@@ -60,17 +60,17 @@ func main() {
 		}),
 	)
 
-	patterns := make([]*models.ScanDetails, 0)
+	scans := make([]*models.ScanDetails, 0)
 
-	yamlPatterns, err := loadPatternsFromYAML(cli.PatternFile)
+	scanArgs, err := loadPatternsFromYAML(cli.PatternFile)
 	if err != nil {
-		fmt.Errorf("unable to load patterns: %s", err.Error())
+		fmt.Errorf("unable to load scans: %s", err.Error())
 	}
-	log.Printf("Loaded %d patterns from YAML file", len(yamlPatterns))
-	patterns = append(patterns, yamlPatterns...)
+	log.Printf("Loaded %d scans from YAML file", len(scanArgs))
+	scans = append(scans, scanArgs...)
 
 	var workers []wrangler.Worker
-	for i, pattern := range patterns {
+	for i, pattern := range scans {
 		worker := wrangler.Worker{
 			ID:          i,
 			Type:        pattern.Tool,
