@@ -32,7 +32,7 @@ func FileLinesToSlice(path string) ([]string, error) {
 
 func CreateDir(dirPath string) error {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		errDir := os.Mkdir(dirPath, 0755)
+		errDir := os.MkdirAll(dirPath, 0755)
 		if errDir != nil {
 			return errDir
 		}
