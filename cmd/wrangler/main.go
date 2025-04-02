@@ -264,7 +264,7 @@ func cleanup(reports, scopes string) error {
 	for _, p := range paths {
 		err := files.SetFileAndDirPermsRecursive(nonRootUser, projectRoot, p)
 		if err != nil {
-			log.Printf("failed to set permissions: %s", err.Error())
+			log.Printf("failed to set permissions for %s: %s", p, err.Error())
 			return err
 		}
 	}
