@@ -34,24 +34,6 @@ type CLI struct {
 	NonRootUser  string `name:"non-root-user" help:"Non-root user who will own report files." required:""`
 }
 
-func loadPatternsFromYAML(filepath string) ([]*models.ScanDetails, error) {
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("error reading pattern file: %v", err)
-	}
-
-	var config models.ScanConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("error parsing pattern file: %v", err)
-	}
-
-	patterns := make([]*models.ScanDetails, 0, len(config.Scans))
-	for _, entry := range config.Scans {
-		patterns = append(patterns, &entry.ScanItem)
-	}
-	return patterns, nil
-}
-
 func main() {
 	var cli CLI
 	_ = kong.Parse(&cli,
@@ -68,18 +50,17 @@ func main() {
 		log.Panic(err)
 	}
 	projectRoot = cwd
-
-	scans := make([]*models.ScanDetails, 0)
+	nonRootUser = cli.NonRootUser
 
 	scanArgs, err := loadPatternsFromYAML(cli.PatternFile)
 	if err != nil {
-		fmt.Errorf("unable to load scans: %s", err.Error())
+		log.Printf("unable to load scans: %s", err.Error())
+		// Decide whether to return or keep going based on your preference
 	}
 	log.Printf("Loaded %d scans from YAML file", len(scanArgs))
-	scans = append(scans, scanArgs...)
 
 	var workers []wrangler.Worker
-	for i, pattern := range scans {
+	for i, pattern := range scanArgs {
 		worker := wrangler.Worker{
 			ID:          i,
 			Type:        pattern.Tool,
@@ -88,7 +69,6 @@ func main() {
 			Description: pattern.Description,
 		}
 		workers = append(workers, worker)
-		i++
 	}
 
 	scope, err := flattenScopeFiles(cli.ScopeFiles, inScopeFile)
@@ -116,7 +96,7 @@ func main() {
 	defer func(reports, scopes string) {
 		err := cleanup(reports, scopes)
 		if err != nil {
-
+			log.Printf("Error during cleanup: %v", err)
 		}
 	}(reportPath, scopeDirectory)
 
@@ -129,51 +109,17 @@ func main() {
 
 	wg := wranglerRepo.StartWorkers(project)
 
+	// 2. Set up channels & listeners
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	go func() {
-		<-sigCh
-		log.Println("Received interrupt signal, stopping workers...")
-		for _, w := range project.Workers {
-			if w.CancelFunc != nil {
-				w.CancelFunc()
-			}
-			w.UserCommand <- wrangler.WorkerStop
-		}
-
-	}()
-
 	errCh := make(chan error, 1)
 
-	// Drain worker responses
-	for _, w := range project.Workers {
-		w := w
-		go func() {
-			for resp := range w.WorkerResponse {
-				// Log everything
-				log.Printf("[Worker %d] %s\n", w.ID, resp)
-
-				// If it includes "error:" or some known substring, treat it as a fatal error
-				if strings.Contains(resp, " error: ") {
-					errCh <- fmt.Errorf("worker %d failed: %s", w.ID, resp)
-				}
-			}
-		}()
-	}
-	go func() {
-		// The moment we see an error from any worker, stop everything
-		err := <-errCh
-		log.Printf("FATAL: %v", err)
-
-		// Force all workers to stop
-		for _, w := range project.Workers {
-			if w.CancelFunc != nil {
-				w.CancelFunc()
-			}
-			w.UserCommand <- wrangler.WorkerStop
-		}
-	}()
+	// 3. Launch goroutines to handle signals and to drain worker responses
+	setupSignalHandler(sigCh, project.Workers)
+	drainWorkerResponses(project.Workers)
+	drainWorkerErrors(project.Workers, errCh)
+	listenToWorkerErrors(errCh, project.Workers)
 
 	// 4. Wait until all workers finish
 	wg.Wait()
@@ -190,8 +136,33 @@ Examples:
 `
 }
 
-func flattenScopeFiles(paths, filename string) (string, error) {
+//------------------------------------------------------
+// YAML Loading
+//------------------------------------------------------
 
+func loadPatternsFromYAML(filepath string) ([]*models.ScanDetails, error) {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading pattern file: %v", err)
+	}
+
+	var config models.ScanConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("error parsing pattern file: %v", err)
+	}
+
+	patterns := make([]*models.ScanDetails, 0, len(config.Scans))
+	for _, entry := range config.Scans {
+		patterns = append(patterns, &entry.ScanItem)
+	}
+	return patterns, nil
+}
+
+//------------------------------------------------------
+// Scope File Handling
+//------------------------------------------------------
+
+func flattenScopeFiles(paths, filename string) (string, error) {
 	scopes := strings.Split(paths, ",")
 	for _, scope := range scopes {
 		scope = strings.TrimSpace(scope)
@@ -210,13 +181,13 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 	}
 
 	ipLen := len(allIps)
-	final := make([]string, ipLen)
+	final := make([]string, 0, ipLen)
 	uniqueIps := make(map[string]bool, ipLen)
 
-	for i, ip := range allIps {
+	for _, ip := range allIps {
 		if !uniqueIps[ip] {
 			uniqueIps[ip] = true
-			final[i] = ip
+			final = append(final, ip)
 		}
 	}
 
@@ -236,6 +207,10 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 	}
 	return fullPath, nil
 }
+
+//------------------------------------------------------
+// Report Directory & Cleanup
+//------------------------------------------------------
 
 func createReportDirectory(outputDir, projectName string) (string, error) {
 	var reportPath string
@@ -262,6 +237,9 @@ func cleanup(reports, scopes string) error {
 	paths := []string{reports, scopes}
 
 	for _, p := range paths {
+		if p == "" {
+			continue
+		}
 		err := files.SetFileAndDirPermsRecursive(nonRootUser, projectRoot, p)
 		if err != nil {
 			log.Printf("failed to set permissions for %s: %s", p, err.Error())
@@ -269,4 +247,71 @@ func cleanup(reports, scopes string) error {
 		}
 	}
 	return nil
+}
+
+//------------------------------------------------------
+// Goroutine Helpers
+//------------------------------------------------------
+
+// setupSignalHandler listens for Ctrl+C or kill signals
+// and gracefully stops all workers if such a signal arrives.
+func setupSignalHandler(sigCh <-chan os.Signal, workers []wrangler.Worker) {
+	go func() {
+		<-sigCh
+		log.Println("Received interrupt signal, stopping workers...")
+		for _, w := range workers {
+			if w.CancelFunc != nil {
+				w.CancelFunc()
+			}
+			w.UserCommand <- wrangler.WorkerStop
+		}
+	}()
+}
+
+// drainWorkerResponses sets up a goroutine per worker to listen
+// to the WorkerResponse channel and logs all messages.
+func drainWorkerResponses(workers []wrangler.Worker) {
+	for _, w := range workers {
+		w := w // capture loop variable
+		go func() {
+			for resp := range w.WorkerResponse {
+				log.Printf("[Worker %d] %s\n", w.ID, resp)
+			}
+		}()
+	}
+}
+
+// drainWorkerErrors watches the ErrorChan of each Worker.
+// If any non-nil error arrives, we send it to errCh.
+// drainWorkerErrors watches ErrorChan of each Worker.
+// It drains all errors until the channel is closed.
+// If a non-nil error arrives, we send it to errCh.
+func drainWorkerErrors(workers []wrangler.Worker, errCh chan<- error) {
+	for _, w := range workers {
+		w := w
+		go func() {
+			// Listen for any errors until the channel is closed.
+			for workerErr := range w.ErrorChan {
+				if workerErr != nil {
+					errCh <- fmt.Errorf("worker %d encountered an OS error: %w", w.ID, workerErr)
+				}
+			}
+		}()
+	}
+}
+
+// listenToWorkerErrors will receive the first error from any worker,
+// log it, and immediately stop all workers.
+func listenToWorkerErrors(errCh <-chan error, workers []wrangler.Worker) {
+	go func() {
+		err := <-errCh
+		log.Printf("FATAL: %v", err)
+		// Force all workers to stop
+		for _, w := range workers {
+			if w.CancelFunc != nil {
+				w.CancelFunc()
+			}
+			w.UserCommand <- wrangler.WorkerStop
+		}
+	}()
 }

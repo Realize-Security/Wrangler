@@ -26,17 +26,17 @@ type Project struct {
 
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
-	ID          int
-	Type        string `validate:"required"`
-	Command     string `validate:"required"`
-	Args        []string
-	Description string `validate:"required"`
-	Started     time.Time
-	Finished    time.Time
-	CancelFunc  context.CancelFunc
-
+	ID             int
+	Type           string `validate:"required"`
+	Command        string `validate:"required"`
+	Args           []string
+	Description    string `validate:"required"`
+	Started        time.Time
+	Finished       time.Time
+	CancelFunc     context.CancelFunc
 	UserCommand    chan string
 	WorkerResponse chan string
+	ErrorChan      chan error
 }
 
 // WranglerRepository defines the interface for creating and managing Projects.
@@ -95,6 +95,10 @@ func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {
 		w.Args = append(w.Args, "-oA")
 		w.Args = append(w.Args, workerReport)
 
+		w.UserCommand = make(chan string, 1)
+		w.WorkerResponse = make(chan string)
+		w.ErrorChan = make(chan error)
+
 		go worker(w, &wg)
 		w.UserCommand <- "run"
 	}
@@ -126,13 +130,16 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		wk.CancelFunc = cancel
+
 		output, err := runCommand(ctx, wk.Command, wk.Args)
+		wk.WorkerResponse <- output
 
 		if err != nil {
-			wk.WorkerResponse <- fmt.Sprintf("Worker %d error: %v\nOutput:\n%s", wk.ID, err, output)
+			wk.ErrorChan <- err
 		} else {
-			wk.WorkerResponse <- fmt.Sprintf("Worker %d completed.\nOutput:\n%s", wk.ID, output)
+			wk.ErrorChan <- nil
 		}
+		close(wk.ErrorChan)
 	}
 }
 
