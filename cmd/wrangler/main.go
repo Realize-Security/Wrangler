@@ -21,6 +21,8 @@ var (
 	scopeDirectory = "./assessment_scope/"
 	inScopeFile    = "in_scope.txt"
 	outOfScopeFile = "out_of_scope.txt"
+	nonRootUser    = ""
+	projectRoot    = ""
 )
 
 type CLI struct {
@@ -29,6 +31,7 @@ type CLI struct {
 	ScopeExclude string `name:"exclude" help:"ExcludeScopeFile from scans" type:"path"`
 	Output       string `name:"output" help:"Output folder (defaults to stdout)"`
 	PatternFile  string `name:"scan-patterns" help:"YML file containing scan patterns"`
+	NonRootUser  string `name:"non-root-user" help:"Non-root user who will own report files." required:""`
 }
 
 func loadPatternsFromYAML(filepath string) ([]*models.ScanDetails, error) {
@@ -59,6 +62,12 @@ func main() {
 			Summary: true,
 		}),
 	)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Panic(err)
+	}
+	projectRoot = cwd
 
 	scans := make([]*models.ScanDetails, 0)
 
@@ -102,6 +111,14 @@ func main() {
 		fmt.Printf(err.Error())
 		return
 	}
+
+	// Always run cleanup()
+	defer func(reports, scopes string) {
+		err := cleanup(reports, scopes)
+		if err != nil {
+
+		}
+	}(reportPath, scopeDirectory)
 
 	wranglerRepo := wrangler.NewWranglerRepository()
 	project := wranglerRepo.NewProject(cli.ProjectName, scope, exclude, cli.Output)
@@ -212,12 +229,7 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 		return "", fmt.Errorf("unable to create directory: %s", err.Error())
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("unable to get current directory: %s", err.Error())
-	}
-
-	fullPath := path.Join(wd, scopeDirectory, filename)
+	fullPath := path.Join(projectRoot, scopeDirectory, filename)
 	err = files.WriteFile(fullPath, final)
 	if err != nil {
 		return "", fmt.Errorf("unable to create file: %s", err.Error())
@@ -243,4 +255,18 @@ func createReportDirectory(outputDir, projectName string) (string, error) {
 		}
 	}
 	return reportPath, nil
+}
+
+func cleanup(reports, scopes string) error {
+	fmt.Println("[*] Cleaning up.")
+	paths := []string{reports, scopes}
+
+	for _, p := range paths {
+		err := files.SetFileAndDirPermsRecursive(nonRootUser, projectRoot, p)
+		if err != nil {
+			log.Printf("failed to set permissions: %s", err.Error())
+			return err
+		}
+	}
+	return nil
 }
