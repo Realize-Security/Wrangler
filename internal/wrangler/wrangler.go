@@ -2,15 +2,17 @@ package wrangler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"time"
 )
 
 // workerStop is the command used to tell the worker goroutine to exit.
-const workerStop = "STOP"
+const WorkerStop = "STOP"
 
 // Project holds overall info, plus a slice of Workers we want to run.
 type Project struct {
@@ -18,17 +20,20 @@ type Project struct {
 	Name             string `validate:"required"`
 	InScopeFile      string `validate:"required"`
 	ExcludeScopeFile string `validate:"required"`
+	ReportDir        string `validate:"required"`
 	Workers          []Worker
 }
 
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
-	ID       int
-	Type     string `validate:"required"`
-	Command  string `validate:"required"`
-	Args     []string
-	Started  time.Time
-	Finished time.Time
+	ID          int
+	Type        string `validate:"required"`
+	Command     string `validate:"required"`
+	Args        []string
+	Description string `validate:"required"`
+	Started     time.Time
+	Finished    time.Time
+	CancelFunc  context.CancelFunc
 
 	UserCommand    chan string
 	WorkerResponse chan string
@@ -36,9 +41,10 @@ type Worker struct {
 
 // WranglerRepository defines the interface for creating and managing Projects.
 type WranglerRepository interface {
-	NewProject(name, scope, exclude string) *Project
+	NewProject(name, inScope, excludeScope, reportDir string) *Project
 	ProjectInit(project *Project)
 	StartWorkers(project *Project) *sync.WaitGroup
+	reportName(description string) string
 }
 
 type wranglerRepository struct{}
@@ -49,7 +55,7 @@ func NewWranglerRepository() WranglerRepository {
 }
 
 // NewProject creates a new Project (not yet started).
-func (wr *wranglerRepository) NewProject(name, inScope, excludeScope string) *Project {
+func (wr *wranglerRepository) NewProject(name, inScope, excludeScope, reportDir string) *Project {
 	return &Project{
 		Name:             name,
 		InScopeFile:      inScope,
@@ -71,12 +77,13 @@ func (wr *wranglerRepository) ProjectInit(project *Project) {
 func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {
 	var wg sync.WaitGroup
 
-	for _, w := range project.Workers {
+	for i := range project.Workers {
 		wg.Add(1)
+		w := &project.Workers[i]
 		// Add additional tool arguments
 		w.Args = append(w.Args, "-T4")
 
-		w.Args = append(w.Args, "-iL ")
+		w.Args = append(w.Args, "-iL")
 		w.Args = append(w.Args, project.InScopeFile)
 
 		if project.ExcludeScopeFile != "" {
@@ -84,7 +91,12 @@ func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {
 			w.Args = append(w.Args, project.ExcludeScopeFile)
 		}
 
-		go worker(&w, &wg)
+		reportName := wr.reportName(w.Description)
+		workerReport := path.Join(project.ReportDir, reportName)
+		w.Args = append(w.Args, "-oA")
+		w.Args = append(w.Args, workerReport)
+
+		go worker(w, &wg)
 		w.UserCommand <- "run"
 	}
 	return &wg
@@ -104,13 +116,19 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 			return
 		}
 
-		if cmd == workerStop {
+		if cmd == WorkerStop {
+			if wk.CancelFunc != nil {
+				wk.CancelFunc()
+			}
 			wk.Finished = time.Now()
 			wk.WorkerResponse <- fmt.Sprintf("Worker %d: STOP command received, shutting down.", wk.ID)
 			return
 		}
 
-		output, err := runCommand(wk.Command, wk.Args)
+		ctx, cancel := context.WithCancel(context.Background())
+		wk.CancelFunc = cancel
+		output, err := runCommand(ctx, wk.Command, wk.Args)
+
 		if err != nil {
 			wk.WorkerResponse <- fmt.Sprintf("Worker %d error: %v\nOutput:\n%s", wk.ID, err, output)
 		} else {
@@ -121,8 +139,8 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 
 // runCommand is a helper to execute an external command with the given args
 // and return combined stdout/stderr.
-func runCommand(cmdName string, args []string) (string, error) {
-	cmd := exec.Command(cmdName, args...)
+func runCommand(ctx context.Context, cmdName string, args []string) (string, error) {
+	cmd := exec.CommandContext(ctx, cmdName, args...)
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -132,7 +150,7 @@ func runCommand(cmdName string, args []string) (string, error) {
 	return out.String(), err
 }
 
-func reportName(description string) string {
+func (wr *wranglerRepository) reportName(description string) string {
 	description = strings.ToLower(description)
-	return strings.Replace(description, "_", " ", -1)
+	return strings.Replace(description, " ", "_", -1)
 }

@@ -4,13 +4,16 @@ import (
 	"Wrangler/internal/files"
 	"Wrangler/internal/wrangler"
 	"Wrangler/pkg/models"
+	"Wrangler/pkg/validators"
 	"fmt"
 	"github.com/alecthomas/kong"
 	"gopkg.in/yaml.v3"
 	"log"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
+	"syscall"
 )
 
 var (
@@ -68,10 +71,11 @@ func main() {
 	var workers []wrangler.Worker
 	for i, pattern := range patterns {
 		worker := wrangler.Worker{
-			ID:      i,
-			Type:    pattern.Tool,
-			Command: pattern.Tool,
-			Args:    pattern.Args,
+			ID:          i,
+			Type:        pattern.Tool,
+			Command:     pattern.Tool,
+			Args:        pattern.Args,
+			Description: pattern.Description,
 		}
 		workers = append(workers, worker)
 		i++
@@ -92,25 +96,49 @@ func main() {
 		}
 	}
 
+	reportPath, err := createReportDirectory(cli.Output)
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
+
 	wranglerRepo := wrangler.NewWranglerRepository()
-	project := wranglerRepo.NewProject(cli.ProjectName, scope, exclude)
+	project := wranglerRepo.NewProject(cli.ProjectName, scope, exclude, cli.Output)
 	project.Workers = workers
+	project.ReportDir = reportPath
 
 	wranglerRepo.ProjectInit(project)
 
 	wg := wranglerRepo.StartWorkers(project)
 
-	//for _, w := range project.Workers {
-	//	w := w
-	//	go func() {
-	//		for resp := range w.WorkerResponse {
-	//			fmt.Printf("[Worker %d] %s\n", w.ID, resp)
-	//		}
-	//	}()
-	//}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
+	go func() {
+		<-sigCh
+		log.Println("Received interrupt signal, stopping workers...")
+		for _, w := range project.Workers {
+			if w.CancelFunc != nil {
+				w.CancelFunc()
+			}
+			w.UserCommand <- wrangler.WorkerStop
+		}
+
+	}()
+
+	// Drain worker responses
+	for _, w := range project.Workers {
+		w := w
+		go func() {
+			for resp := range w.WorkerResponse {
+				log.Printf("[Worker %d] %s\n", w.ID, resp)
+			}
+		}()
+	}
+
+	// 4. Wait until all workers finish
 	wg.Wait()
-	fmt.Println("All workers have stopped. Exiting now.")
+	log.Println("All workers have stopped. Exiting now.")
 }
 
 func description() string {
@@ -124,18 +152,15 @@ Examples:
 }
 
 func flattenScopeFiles(paths, filename string) (string, error) {
-	ipLen := 0
+
 	scopes := strings.Split(paths, ",")
 	for _, scope := range scopes {
 		scope = strings.TrimSpace(scope)
 		if _, err := os.Stat(scope); os.IsNotExist(err) {
 			return "", fmt.Errorf("file %s does not exist", scope)
 		}
-		ipLen = ipLen + len(scope)
 	}
 	var allIps []string
-	final := make([]string, ipLen)
-	uniqueIps := make(map[string]bool, ipLen)
 
 	for _, scope := range scopes {
 		ips, err := files.FileLinesToSlice(scope)
@@ -145,6 +170,10 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 		allIps = append(allIps, ips...)
 	}
 
+	ipLen := len(allIps)
+	final := make([]string, ipLen)
+	uniqueIps := make(map[string]bool, ipLen)
+
 	for i, ip := range allIps {
 		if !uniqueIps[ip] {
 			uniqueIps[ip] = true
@@ -152,15 +181,44 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 		}
 	}
 
+	if err := validators.ValidateScope(final); err != nil {
+		return "", err
+	}
+
 	err := files.CreateDir(scopeDirectory)
 	if err != nil {
 		return "", fmt.Errorf("unable to create directory: %s", err.Error())
 	}
 
-	fullPath := path.Join(scopeDirectory, filename)
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("unable to get current directory: %s", err.Error())
+	}
+
+	fullPath := path.Join(wd, scopeDirectory, filename)
 	err = files.WriteFile(fullPath, final)
 	if err != nil {
 		return "", fmt.Errorf("unable to create file: %s", err.Error())
 	}
 	return fullPath, nil
+}
+
+func createReportDirectory(outputDir string) (string, error) {
+	var reportPath string
+	if outputDir != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		reportPath = path.Join(wd, outputDir)
+
+		_, err = os.Stat(reportPath)
+		if err != nil {
+			err = files.CreateDir(reportPath)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return reportPath, nil
 }
