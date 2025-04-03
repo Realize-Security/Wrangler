@@ -21,7 +21,13 @@ type Project struct {
 	InScopeFile      string `validate:"required"`
 	ExcludeScopeFile string `validate:"required"`
 	ReportDir        string `validate:"required"`
+	Targets          []Target
 	Workers          []Worker
+}
+
+type Target struct {
+	Target    string `validate:"required"`
+	OpenPorts []int
 }
 
 // Worker describes a single worker’s configuration and runtime state.
@@ -131,7 +137,7 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 		ctx, cancel := context.WithCancel(context.Background())
 		wk.CancelFunc = cancel
 
-		output, err := runCommand(ctx, wk.Command, wk.Args)
+		output, err := runCommandCtx(ctx, wk.Command, wk.Args)
 		wk.WorkerResponse <- output
 
 		if err != nil {
@@ -143,9 +149,9 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 	}
 }
 
-// runCommand is a helper to execute an external command with the given args
+// runCommandCtx is a helper to execute an external command with the given args
 // and return combined stdout/stderr.
-func runCommand(ctx context.Context, cmdName string, args []string) (string, error) {
+func runCommandCtx(ctx context.Context, cmdName string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 
 	var out bytes.Buffer

@@ -92,11 +92,11 @@ func main() {
 		return
 	}
 
-	// Always run cleanup()
+	// Always run cleanupPermissions()
 	defer func(reports, scopes string) {
-		err := cleanup(reports, scopes)
+		err := cleanupPermissions(reports, scopes)
 		if err != nil {
-			log.Printf("Error during cleanup: %v", err)
+			log.Printf("Error during cleanupPermissions(): %v", err)
 		}
 	}(reportPath, scopeDirectory)
 
@@ -232,7 +232,7 @@ func createReportDirectory(outputDir, projectName string) (string, error) {
 	return reportPath, nil
 }
 
-func cleanup(reports, scopes string) error {
+func cleanupPermissions(reports, scopes string) error {
 	fmt.Println("[*] Cleaning up.")
 	paths := []string{reports, scopes}
 
