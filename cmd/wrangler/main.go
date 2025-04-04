@@ -14,7 +14,9 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 var (
@@ -26,6 +28,18 @@ var (
 	scanBatchSize  = 200
 )
 
+// Set up channels & listeners needed by all workflows
+var (
+	fullScan = make(chan string)
+	sigCh    = make(chan os.Signal, 1)
+	errCh    = make(chan error, 1)
+)
+
+var (
+	wranglerRepo wrangler.WranglerRepository
+	project      *wrangler.Project
+)
+
 type CLI struct {
 	ProjectName  string `name:"project-name" help:"Name for the project" required:""`
 	ScopeFiles   string `name:"scope" help:"Files containing target IP addresses or FQDNs" required:"" type:"path"`
@@ -34,6 +48,7 @@ type CLI struct {
 	Output       string `name:"output" help:"Output folder (defaults to stdout)"`
 	PatternFile  string `name:"scan-patterns" help:"YML file containing scan patterns"`
 	BatchSize    string `name:"batch-size" help:"Number of hosts to add to Nmap batches" required:""`
+	RunDiscovery bool   `name:"discover" help:"Run ICMP and port knocking checks to establish host availability"`
 }
 
 func main() {
@@ -47,6 +62,8 @@ func main() {
 		}),
 	)
 
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Panic(err)
@@ -54,6 +71,7 @@ func main() {
 	projectRoot = cwd
 	nonRootUser = cli.NonRootUser
 
+	// Load primary primaryWorkers from file
 	scanArgs, err := loadPatternsFromYAML(cli.PatternFile)
 	if err != nil {
 		log.Printf("unable to load scans: %s", err.Error())
@@ -61,7 +79,14 @@ func main() {
 	}
 	log.Printf("Loaded %d scans from YAML file", len(scanArgs))
 
-	var workers []wrangler.Worker
+	reportPath, err := createReportDirectory(cli.Output, cli.ProjectName)
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
+
+	//Initialise primary primaryWorkers
+	var primaryWorkers []wrangler.Worker
 	for i, pattern := range scanArgs {
 		worker := wrangler.Worker{
 			ID:          i,
@@ -70,31 +95,22 @@ func main() {
 			Args:        pattern.Args,
 			Description: pattern.Description,
 		}
-		workers = append(workers, worker)
+		primaryWorkers = append(primaryWorkers, worker)
 	}
 
-	scope, err := flattenScopeFiles(cli.ScopeFiles, inScopeFile)
-	if err != nil {
-		fmt.Printf(err.Error())
-		return
-	}
-
-	var exclude string
+	// First flatten and write out of scope hosts to file
+	// Leave in-scope files until host discovery avoided or completed
+	var excludeScope []string
 	if cli.ScopeExclude != "" {
-		exclude, err = flattenScopeFiles(cli.ScopeExclude, outOfScopeFile)
+		excludeScope, err = flattenScopes(cli.ScopeExclude)
 		if err != nil {
 			fmt.Printf(err.Error())
 			return
 		}
 	}
+	exclude, err := files.WriteSliceToFile(cwd, scopeDirectory, outOfScopeFile, excludeScope)
 
-	reportPath, err := createReportDirectory(cli.Output, cli.ProjectName)
-	if err != nil {
-		fmt.Printf(err.Error())
-		return
-	}
-
-	// Always run cleanupPermissions()
+	// Initialise cleanupPermissions() to always run when program exits
 	defer func(reports, scopes string) {
 		err := cleanupPermissions(reports, scopes)
 		if err != nil {
@@ -102,34 +118,51 @@ func main() {
 		}
 	}(reportPath, scopeDirectory)
 
-	wranglerRepo := wrangler.NewWranglerRepository()
-	project := wranglerRepo.NewProject(cli.ProjectName, scope, exclude, cli.Output)
-	project.Workers = workers
+	// Initialise anew project
+	wranglerRepo = wrangler.NewWranglerRepository()
+	project = wranglerRepo.NewProject(cli.ProjectName, exclude, cli.Output)
+
+	// If discovery is run, this will create a list of hosts to be added to scope.
+	// Otherwise, use user-supplied list verbatim
+
+	// First get user-supplied scope
+	var inScope []string
+	if cli.ScopeExclude != "" {
+		inScope, err = flattenScopes(cli.ScopeExclude)
+		if err != nil {
+			fmt.Printf(err.Error())
+			return
+		}
+	}
+
+	var wgDisc *sync.WaitGroup
+	if cli.RunDiscovery {
+		wgDisc = initialiseDiscoveryWorkers(inScope)
+		go func() {
+			wgDisc.Wait()
+			log.Println("All discovery workers done.")
+		}()
+	} else {
+		// If no discovery, write scope to file straight away
+		inScopeFile, err = files.WriteSliceToFile(cwd, scopeDirectory, inScopeFile, inScope)
+	}
+
+	project.InScopeFile = inScopeFile
+	project.Workers = primaryWorkers
 	project.ReportDir = reportPath
 
 	wranglerRepo.ProjectInit(project)
-	wg := wranglerRepo.StartWorkers(project)
+	// TODO: Update main workers to read from fullScan channel
+	wgMain := wranglerRepo.StartWorkers(project)
 
-	// 2. Set up channels & listeners
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
-	errCh := make(chan error, 1)
-	unconfirmedHosts := make(chan wrangler.Worker)
-	fullScan := make(chan wrangler.Worker)
-
-	// 3. Launch goroutines to handle signals and to drain worker responses
-	listenForPingScanHostUp(unconfirmedHosts, fullScan, workers)
-	onePortOpenOrClosed(fullScan, workers)
-
-	setupSignalHandler(sigCh, project.Workers)
+	setupSignalHandler(project.Workers, sigCh)
 	drainWorkerResponses(project.Workers)
 	drainWorkerErrors(project.Workers, errCh)
-	listenToWorkerErrors(errCh, project.Workers)
+	listenToWorkerErrors(project.Workers, errCh)
 
-	// 4. Wait until all workers finish
-	wg.Wait()
-	log.Println("All workers have stopped. Exiting now.")
+	// 4. Wait until all primary workers finish
+	wgMain.Wait()
+	log.Println("All primaryWorkers have stopped. Exiting now.")
 }
 
 func description() string {
@@ -168,12 +201,12 @@ func loadPatternsFromYAML(filepath string) ([]*models.ScanDetails, error) {
 // Scope File Handling
 //------------------------------------------------------
 
-func flattenScopeFiles(paths, filename string) (string, error) {
+func flattenScopes(paths string) ([]string, error) {
 	scopes := strings.Split(paths, ",")
 	for _, scope := range scopes {
 		scope = strings.TrimSpace(scope)
 		if _, err := os.Stat(scope); os.IsNotExist(err) {
-			return "", fmt.Errorf("file %s does not exist", scope)
+			return nil, fmt.Errorf("file %s does not exist", scope)
 		}
 	}
 	var allIps []string
@@ -181,7 +214,7 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 	for _, scope := range scopes {
 		ips, err := files.FileLinesToSlice(scope)
 		if err != nil {
-			return "", fmt.Errorf("unable to parse: %s. error: %s", scope, err.Error())
+			return nil, fmt.Errorf("unable to parse: %s. error: %s", scope, err.Error())
 		}
 		allIps = append(allIps, ips...)
 	}
@@ -198,20 +231,76 @@ func flattenScopeFiles(paths, filename string) (string, error) {
 	}
 
 	if err := validators.ValidateScope(final); err != nil {
-		return "", err
+		return nil, err
 	}
+	return final, nil
+}
 
-	err := files.CreateDir(scopeDirectory)
-	if err != nil {
-		return "", fmt.Errorf("unable to create directory: %s", err.Error())
-	}
+// initialiseDiscoveryWorkers initiates two host discovery layers, using ICMP and TCP/UDP ports open/closed.
+// Workers exit on first positive port finding
+func initialiseDiscoveryWorkers(inScope []string) *sync.WaitGroup {
+	// unconfirmedHosts chan is only needed in discovery
+	unconfirmedHosts := make(chan string)
 
-	fullPath := path.Join(projectRoot, scopeDirectory, filename)
-	err = files.WriteFile(fullPath, final)
-	if err != nil {
-		return "", fmt.Errorf("unable to create file: %s", err.Error())
+	var w []wrangler.Worker
+	for i, target := range inScope {
+		worker := wrangler.Worker{
+			ID:     i,
+			Type:   "nmap",
+			Target: target,
+			Args:   []string{"-sn", target},
+		}
+		w = append(w, worker)
 	}
-	return fullPath, nil
+	wg := wranglerRepo.HostDiscoveryScan(project)
+	go batchProcessDiscovery(w, unconfirmedHosts, scanBatchSize)
+
+	// 3. Launch goroutines to handle signals and to drain worker responses
+	listenForPingScanHostUp(w, unconfirmedHosts, fullScan)
+	onePortOpenOrClosed(w, fullScan)
+	setupSignalHandler(w, sigCh)
+	drainWorkerResponses(w)
+	drainWorkerErrors(w, errCh)
+	listenToWorkerErrors(w, errCh)
+
+	return wg
+}
+
+// batchProcessDiscovery processes additional discover for discovery workgroups
+func batchProcessDiscovery(w []wrangler.Worker, unconfirmedHosts <-chan string, n int) {
+	var wgMaster []*sync.WaitGroup
+	for {
+		batch := readNTargetsFromChannel(unconfirmedHosts, n)
+		if len(batch) == 0 {
+			break
+		}
+		wg, err := wranglerRepo.PortOpenOrClosedDiscovery(project, batch, "tcp", 1000)
+		if err != nil {
+			log.Printf("error is batch discovery: %s", err)
+			continue
+		}
+		wgMaster = append(wgMaster, wg)
+		// Sleep briefly to give the CPU clock a break
+		time.Sleep(time.Second * 1)
+	}
+	for _, wgc := range wgMaster {
+		if wgc != nil {
+			wgc.Wait()
+		}
+	}
+}
+
+// readNTargetsFromChannel reads n targets in from a channel for processing
+func readNTargetsFromChannel(unconfirmedHosts <-chan string, n int) []string {
+	targets := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		target, ok := <-unconfirmedHosts
+		if !ok {
+			break
+		}
+		targets = append(targets, target)
+	}
+	return targets
 }
 
 //------------------------------------------------------
@@ -261,15 +350,15 @@ func cleanupPermissions(reports, scopes string) error {
 
 // listenForPingScanHostUp listens for a string to indicate a host is active during a ping scan.
 // Adds valid workers to a hostsUp up chan to be fed into scanning
-func listenForPingScanHostUp(unconfirmedHostStatus, fullScan chan<- wrangler.Worker, workers []wrangler.Worker) {
+func listenForPingScanHostUp(workers []wrangler.Worker, unconfirmedHostStatus, fullScan chan<- string) {
 	for _, w := range workers {
 		w := w
 		go func() {
 			for resp := range w.WorkerResponse {
-				if strings.Contains(resp, "host is up") {
-					fullScan <- w
+				if strings.Contains(resp, "Host is up (") {
+					fullScan <- w.Target
 				} else {
-					unconfirmedHostStatus <- w
+					unconfirmedHostStatus <- w.Target
 				}
 			}
 		}()
@@ -278,13 +367,14 @@ func listenForPingScanHostUp(unconfirmedHostStatus, fullScan chan<- wrangler.Wor
 
 // onePortOpenOrClosed listens for a string to indicate a host is active during a ping scan.
 // Adds valid workers to a hostsUp up chan to be fed into scanning
-func onePortOpenOrClosed(fullScan chan<- wrangler.Worker, workers []wrangler.Worker) {
+func onePortOpenOrClosed(workers []wrangler.Worker, fullScan chan<- string) {
 	for _, w := range workers {
 		w := w
 		go func() {
 			for resp := range w.WorkerResponse {
-				if strings.Contains(resp, "open") {
-					fullScan <- w
+				if (strings.Contains(resp, "open") || strings.Contains(resp, "closed")) && !strings.Contains(resp, "filtered") {
+					fullScan <- w.Target
+					w.UserCommand <- wrangler.WorkerStop
 				}
 			}
 		}()
@@ -293,7 +383,7 @@ func onePortOpenOrClosed(fullScan chan<- wrangler.Worker, workers []wrangler.Wor
 
 // setupSignalHandler listens for Ctrl+C or kill signals
 // and gracefully stops all workers if such a signal arrives.
-func setupSignalHandler(sigCh <-chan os.Signal, workers []wrangler.Worker) {
+func setupSignalHandler(workers []wrangler.Worker, sigCh <-chan os.Signal) {
 	go func() {
 		<-sigCh
 		log.Println("Received interrupt signal, stopping workers...")
@@ -340,7 +430,7 @@ func drainWorkerErrors(workers []wrangler.Worker, errCh chan<- error) {
 
 // listenToWorkerErrors will receive the first error from any worker,
 // log it, and immediately stop all workers.
-func listenToWorkerErrors(errCh <-chan error, workers []wrangler.Worker) {
+func listenToWorkerErrors(workers []wrangler.Worker, errCh <-chan error) {
 	go func() {
 		err := <-errCh
 		log.Printf("FATAL: %v", err)

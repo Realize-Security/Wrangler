@@ -7,12 +7,21 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
+	"strconv"
 	"sync"
 	"time"
 )
 
 // workerStop is the command used to tell the worker goroutine to exit.
 const WorkerStop = "STOP"
+
+var (
+	// TCPTimeoutMins TCP discovery scans will exist after n minutes
+	TCPTimeoutMins = 5 * time.Minute
+
+	// UDPTimeoutMins UDP discovery scans will exist after n minutes
+	UDPTimeoutMins = 10 * time.Minute
+)
 
 // Project holds overall info, plus a slice of Workers we want to run.
 type Project struct {
@@ -30,15 +39,22 @@ type Target struct {
 	OpenPorts []int
 }
 
+type defaultProtoCols struct {
+	TCP string
+	UDP string
+}
+
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
 	ID             int
 	Type           string `validate:"required"`
 	Command        string `validate:"required"`
 	Args           []string
+	Target         string
 	Description    string `validate:"required"`
 	Started        time.Time
 	Finished       time.Time
+	Timeout        time.Duration
 	CancelFunc     context.CancelFunc
 	UserCommand    chan string
 	WorkerResponse chan string
@@ -47,8 +63,10 @@ type Worker struct {
 
 // WranglerRepository defines the interface for creating and managing Projects.
 type WranglerRepository interface {
-	NewProject(name, inScope, excludeScope, reportDir string) *Project
+	NewProject(name, excludeScope, reportDir string) *Project
 	ProjectInit(project *Project)
+	HostDiscoveryScan(project *Project) *sync.WaitGroup
+	PortOpenOrClosedDiscovery(project *Project, targets []string, protocol string, topPorts int) (*sync.WaitGroup, error)
 	StartWorkers(project *Project) *sync.WaitGroup
 }
 
@@ -60,11 +78,11 @@ func NewWranglerRepository() WranglerRepository {
 }
 
 // NewProject creates a new Project (not yet started).
-func (wr *wranglerRepository) NewProject(name, inScope, excludeScope, reportDir string) *Project {
+func (wr *wranglerRepository) NewProject(name, excludeScope, reportDir string) *Project {
 	return &Project{
 		Name:             name,
-		InScopeFile:      inScope,
 		ExcludeScopeFile: excludeScope,
+		ReportDir:        reportDir,
 	}
 }
 
@@ -77,12 +95,73 @@ func (wr *wranglerRepository) ProjectInit(project *Project) {
 	}
 }
 
-// DiscoveryScan initiates ICMP and port check discovery
-func (wr *wranglerRepository) DiscoveryScan(project *Project, unconfirmedHostStatus, fullScan chan<- Worker) *sync.WaitGroup {
+// HostDiscoveryScan initiates ICMP and port check discovery.
+// This runs one nmap -sn scan per host.
+func (wr *wranglerRepository) HostDiscoveryScan(project *Project) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	wg.Add(1)
+	for _, w := range project.Workers {
+		wg.Add(1)
 
+		if project.ExcludeScopeFile != "" {
+			w.Args = append(w.Args, "--excludefile")
+			w.Args = append(w.Args, project.ExcludeScopeFile)
+		}
+
+		w.UserCommand = make(chan string, 1)
+		w.WorkerResponse = make(chan string)
+		w.ErrorChan = make(chan error)
+
+		go worker(&w, &wg)
+		w.UserCommand <- "run"
+	}
 	return &wg
+}
+
+// PortOpenOrClosedDiscovery checks for at least one TCP or UDP port being open or closed
+func (wr *wranglerRepository) PortOpenOrClosedDiscovery(project *Project, targets []string, protocol string, topPorts int) (*sync.WaitGroup, error) {
+	var wg sync.WaitGroup
+	protocols := map[string]string{"tcp": "-sT", "udp": "-sU"}
+
+	for i, target := range targets {
+		wg.Add(1)
+
+		proto, ok := protocols[protocol]
+		if !ok {
+			return nil, fmt.Errorf("%s is a not a valid protocol. Use 'tcp' or 'udp'", protocol)
+		}
+
+		w := &Worker{
+			ID:     i,
+			Type:   "nmap",
+			Target: target,
+			Args:   []string{proto, target},
+		}
+
+		var portLimit string
+		if proto == "tcp" {
+			w.Timeout = TCPTimeoutMins
+			portLimit = strconv.Itoa(topPorts)
+		} else {
+			w.Timeout = UDPTimeoutMins
+			portLimit = strconv.Itoa(topPorts)
+		}
+
+		portArgs := []string{"--top-ports", portLimit}
+		w.Args = append(w.Args, portArgs...)
+
+		if project.ExcludeScopeFile != "" {
+			w.Args = append(w.Args, "--excludefile")
+			w.Args = append(w.Args, project.ExcludeScopeFile)
+		}
+
+		w.UserCommand = make(chan string, 1)
+		w.WorkerResponse = make(chan string)
+		w.ErrorChan = make(chan error)
+
+		go worker(w, &wg)
+		w.UserCommand <- "run"
+	}
+	return &wg, nil
 }
 
 // StartWorkers spins up all workers in goroutines. Each worker listens for commands

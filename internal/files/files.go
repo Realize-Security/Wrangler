@@ -36,6 +36,20 @@ func FileLinesToSlice(path string) ([]string, error) {
 	return result, nil
 }
 
+func WriteSliceToFile(projectRoot, scopeDirectory, filename string, targets []string) (string, error) {
+	err := CreateDir(scopeDirectory)
+	if err != nil {
+		return "", fmt.Errorf("unable to create directory: %s", err.Error())
+	}
+
+	fullPath := path.Join(projectRoot, scopeDirectory, filename)
+	err = WriteFile(fullPath, targets)
+	if err != nil {
+		return "", fmt.Errorf("unable to create file: %s", err.Error())
+	}
+	return fullPath, nil
+}
+
 func CreateDir(dirPath string) error {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
 		errDir := os.MkdirAll(dirPath, 0755)
