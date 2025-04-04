@@ -77,6 +77,14 @@ func (wr *wranglerRepository) ProjectInit(project *Project) {
 	}
 }
 
+// DiscoveryScan initiates ICMP and port check discovery
+func (wr *wranglerRepository) DiscoveryScan(project *Project, unconfirmedHostStatus, fullScan chan<- Worker) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	return &wg
+}
+
 // StartWorkers spins up all workers in goroutines. Each worker listens for commands
 // on its UserCommand channel and sends results on its WorkerResponse channel.
 func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {

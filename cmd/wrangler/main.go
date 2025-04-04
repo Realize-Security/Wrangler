@@ -23,15 +23,17 @@ var (
 	outOfScopeFile = "out_of_scope.txt"
 	nonRootUser    = ""
 	projectRoot    = ""
+	scanBatchSize  = 200
 )
 
 type CLI struct {
 	ProjectName  string `name:"project-name" help:"Name for the project" required:""`
 	ScopeFiles   string `name:"scope" help:"Files containing target IP addresses or FQDNs" required:"" type:"path"`
+	NonRootUser  string `name:"non-root-user" help:"Non-root user who will own report files." required:""`
 	ScopeExclude string `name:"exclude" help:"ExcludeScopeFile from scans" type:"path"`
 	Output       string `name:"output" help:"Output folder (defaults to stdout)"`
 	PatternFile  string `name:"scan-patterns" help:"YML file containing scan patterns"`
-	NonRootUser  string `name:"non-root-user" help:"Non-root user who will own report files." required:""`
+	BatchSize    string `name:"batch-size" help:"Number of hosts to add to Nmap batches" required:""`
 }
 
 func main() {
@@ -106,7 +108,6 @@ func main() {
 	project.ReportDir = reportPath
 
 	wranglerRepo.ProjectInit(project)
-
 	wg := wranglerRepo.StartWorkers(project)
 
 	// 2. Set up channels & listeners
@@ -114,8 +115,13 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
+	unconfirmedHosts := make(chan wrangler.Worker)
+	fullScan := make(chan wrangler.Worker)
 
 	// 3. Launch goroutines to handle signals and to drain worker responses
+	listenForPingScanHostUp(unconfirmedHosts, fullScan, workers)
+	onePortOpenOrClosed(fullScan, workers)
+
 	setupSignalHandler(sigCh, project.Workers)
 	drainWorkerResponses(project.Workers)
 	drainWorkerErrors(project.Workers, errCh)
@@ -252,6 +258,38 @@ func cleanupPermissions(reports, scopes string) error {
 //------------------------------------------------------
 // Goroutine Helpers
 //------------------------------------------------------
+
+// listenForPingScanHostUp listens for a string to indicate a host is active during a ping scan.
+// Adds valid workers to a hostsUp up chan to be fed into scanning
+func listenForPingScanHostUp(unconfirmedHostStatus, fullScan chan<- wrangler.Worker, workers []wrangler.Worker) {
+	for _, w := range workers {
+		w := w
+		go func() {
+			for resp := range w.WorkerResponse {
+				if strings.Contains(resp, "host is up") {
+					fullScan <- w
+				} else {
+					unconfirmedHostStatus <- w
+				}
+			}
+		}()
+	}
+}
+
+// onePortOpenOrClosed listens for a string to indicate a host is active during a ping scan.
+// Adds valid workers to a hostsUp up chan to be fed into scanning
+func onePortOpenOrClosed(fullScan chan<- wrangler.Worker, workers []wrangler.Worker) {
+	for _, w := range workers {
+		w := w
+		go func() {
+			for resp := range w.WorkerResponse {
+				if strings.Contains(resp, "open") {
+					fullScan <- w
+				}
+			}
+		}()
+	}
+}
 
 // setupSignalHandler listens for Ctrl+C or kill signals
 // and gracefully stops all workers if such a signal arrives.
