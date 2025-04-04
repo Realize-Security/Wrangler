@@ -65,9 +65,9 @@ type Worker struct {
 type WranglerRepository interface {
 	NewProject(name, excludeScope, reportDir string) *Project
 	ProjectInit(project *Project)
-	HostDiscoveryScan(project *Project) *sync.WaitGroup
+	HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup
 	PortOpenOrClosedDiscovery(project *Project, targets []string, protocol string, topPorts int) (*sync.WaitGroup, error)
-	StartWorkers(project *Project) *sync.WaitGroup
+	StartWorkers(project *Project, fullScan <-chan string, batchSize int) *sync.WaitGroup
 }
 
 type wranglerRepository struct{}
@@ -97,21 +97,27 @@ func (wr *wranglerRepository) ProjectInit(project *Project) {
 
 // HostDiscoveryScan initiates ICMP and port check discovery.
 // This runs one nmap -sn scan per host.
-func (wr *wranglerRepository) HostDiscoveryScan(project *Project) *sync.WaitGroup {
+func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	for _, w := range project.Workers {
+	for i := range workers {
 		wg.Add(1)
-
-		if project.ExcludeScopeFile != "" {
+		w := &workers[i]
+		w.Command = "nmap"
+		if exclude != "" {
 			w.Args = append(w.Args, "--excludefile")
-			w.Args = append(w.Args, project.ExcludeScopeFile)
+			w.Args = append(w.Args, exclude)
 		}
-
-		w.UserCommand = make(chan string, 1)
-		w.WorkerResponse = make(chan string)
-		w.ErrorChan = make(chan error)
-
-		go worker(&w, &wg)
+		// Only initialize if not set (optional safety)
+		if w.UserCommand == nil {
+			w.UserCommand = make(chan string, 1)
+		}
+		if w.WorkerResponse == nil {
+			w.WorkerResponse = make(chan string)
+		}
+		if w.ErrorChan == nil {
+			w.ErrorChan = make(chan error)
+		}
+		go worker(w, &wg)
 		w.UserCommand <- "run"
 	}
 	return &wg
@@ -166,36 +172,39 @@ func (wr *wranglerRepository) PortOpenOrClosedDiscovery(project *Project, target
 
 // StartWorkers spins up all workers in goroutines. Each worker listens for commands
 // on its UserCommand channel and sends results on its WorkerResponse channel.
-func (wr *wranglerRepository) StartWorkers(project *Project) *sync.WaitGroup {
-	var wg sync.WaitGroup
+func (wr *wranglerRepository) StartWorkers(project *Project, fullScan <-chan string, batchSize int) *sync.WaitGroup {
+	var wgMaster sync.WaitGroup
 
-	for i := range project.Workers {
-		wg.Add(1)
-		w := &project.Workers[i]
-		// Add additional tool arguments
-		w.Args = append(w.Args, "-T4")
-
-		w.Args = append(w.Args, "-iL")
-		w.Args = append(w.Args, project.InScopeFile)
-
-		if project.ExcludeScopeFile != "" {
-			w.Args = append(w.Args, "--excludefile")
-			w.Args = append(w.Args, project.ExcludeScopeFile)
+	for {
+		batch := helpers.ReadNTargetsFromChannel(fullScan, batchSize)
+		if len(batch) == 0 {
+			break
 		}
 
-		reportName := helpers.SpacesToUnderscores(w.Description)
-		workerReport := path.Join(project.ReportDir, reportName)
-		w.Args = append(w.Args, "-oA")
-		w.Args = append(w.Args, workerReport)
+		for i := range project.Workers {
+			wgMaster.Add(1)
+			w := &project.Workers[i]
+			// Add additional tool arguments
+			w.Args = append(w.Args, "-T4")
 
-		w.UserCommand = make(chan string, 1)
-		w.WorkerResponse = make(chan string)
-		w.ErrorChan = make(chan error)
+			w.Args = append(w.Args, "-iL")
+			w.Args = append(w.Args, project.InScopeFile)
 
-		go worker(w, &wg)
-		w.UserCommand <- "run"
+			if project.ExcludeScopeFile != "" {
+				w.Args = append(w.Args, "--excludefile")
+				w.Args = append(w.Args, project.ExcludeScopeFile)
+			}
+
+			reportName := helpers.SpacesToUnderscores(w.Description)
+			workerReport := path.Join(project.ReportDir, reportName)
+			w.Args = append(w.Args, "-oA")
+			w.Args = append(w.Args, workerReport)
+
+			go worker(w, &wgMaster)
+			w.UserCommand <- "run"
+		}
 	}
-	return &wg
+	return &wgMaster
 }
 
 // worker continuously reads from worker.UserCommand, runs the external command
