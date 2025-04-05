@@ -1,14 +1,20 @@
 package wrangler
 
 import (
+	"Wrangler/internal/files"
 	"Wrangler/pkg/helpers"
+	"Wrangler/pkg/models"
+	"Wrangler/pkg/serializers"
 	"bytes"
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
+	"os/signal"
 	"path"
-	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -16,11 +22,21 @@ import (
 const WorkerStop = "STOP"
 
 var (
-	// TCPTimeoutMins TCP discovery scans will exist after n minutes
-	TCPTimeoutMins = 5 * time.Minute
+	scopeDir    = "./assessment_scope/"
+	inScopeFile = "in_scope.txt"
+	excludeFile = "out_of_scope.txt"
+	nonRootUser = ""
+	projectRoot = ""
+	batchSize   = 200
+)
 
-	// UDPTimeoutMins UDP discovery scans will exist after n minutes
-	UDPTimeoutMins = 10 * time.Minute
+// Set up channels & listeners needed by all workflows
+var (
+	fullScan         = make(chan string)
+	sigCh            = make(chan os.Signal, 1)
+	errCh            = make(chan error, 1)
+	finalisedTargets = make([]string, 0)
+	primaryWorkers   []Worker
 )
 
 // Project holds overall info, plus a slice of Workers we want to run.
@@ -63,31 +79,61 @@ type Worker struct {
 
 // WranglerRepository defines the interface for creating and managing Projects.
 type WranglerRepository interface {
-	NewProject(name, excludeScope, reportDir string) *Project
+	NewProject() *Project
 	ProjectInit(project *Project)
+	setupInternal(project *Project)
 	HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup
-	PortOpenOrClosedDiscovery(project *Project, targets []string, protocol string, topPorts int) (*sync.WaitGroup, error)
 	StartWorkers(project *Project, fullScan <-chan string, batchSize int) *sync.WaitGroup
+	DiscoveryWorkersInit(inScope []string, excludeFile string) *sync.WaitGroup
+	DiscoveryResponseMonitor(workers []Worker, unknownHosts, fullScan chan<- string)
+	CleanupPermissions(reports, scopes string) error
+	WorkerTimeout(workers []Worker)
+	SetupSignalHandler(workers []Worker, sigCh <-chan os.Signal)
+	DrainWorkerErrors(workers []Worker, errCh chan<- error)
+	ListenToWorkerErrors(workers []Worker, errCh <-chan error)
+	CreateReportDirectory(dir, projectName string) (string, error)
+	FlattenScopes(paths string) ([]string, error)
 }
 
-type wranglerRepository struct{}
+type wranglerRepository struct {
+	cli models.CLI
+}
 
 // NewWranglerRepository constructs our repository.
-func NewWranglerRepository() WranglerRepository {
-	return &wranglerRepository{}
+func NewWranglerRepository(cli models.CLI) WranglerRepository {
+
+	args, err := serializers.LoadScansFromYAML(cli.PatternFile)
+	if err != nil {
+		log.Printf("unable to load scans: %s", err.Error())
+		// Decide whether to return or keep going based on your preference
+	}
+	log.Printf("Loaded %d scans from YAML file", len(args))
+
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Panic(err)
+	}
+	projectRoot = cwd
+	nonRootUser = cli.NonRootUser
+	return &wranglerRepository{
+		cli: cli,
+	}
 }
 
 // NewProject creates a new Project (not yet started).
-func (wr *wranglerRepository) NewProject(name, excludeScope, reportDir string) *Project {
+func (wr *wranglerRepository) NewProject() *Project {
 	return &Project{
-		Name:             name,
-		ExcludeScopeFile: excludeScope,
-		ReportDir:        reportDir,
+		Name:             wr.cli.ProjectName,
+		ExcludeScopeFile: wr.cli.ScopeExclude,
+		ReportDir:        wr.cli.Output,
 	}
 }
 
 // ProjectInit initializes each Worker’s channels but does NOT start them yet.
 func (wr *wranglerRepository) ProjectInit(project *Project) {
+	wr.setupInternal(project)
 	for i, wk := range project.Workers {
 		wk.UserCommand = make(chan string)
 		wk.WorkerResponse = make(chan string)
@@ -95,8 +141,108 @@ func (wr *wranglerRepository) ProjectInit(project *Project) {
 	}
 }
 
+func (wr *wranglerRepository) setupInternal(project *Project) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Panic(err)
+	}
+	projectRoot = cwd
+	nonRootUser = wr.cli.NonRootUser
+
+	reportPath, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
+
+	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+	if err != nil {
+		log.Printf("unable to load scans: %s", err.Error())
+		// Decide whether to return or keep going based on your preference
+	}
+	log.Printf("Loaded %d scans from YAML file", len(args))
+
+	//Initialise primary primaryWorkers
+	//var primaryWorkers []Worker
+	for i, pattern := range args {
+		worker := Worker{
+			ID:             i,
+			Type:           pattern.Tool,
+			Command:        pattern.Tool,
+			Args:           pattern.Args,
+			Description:    pattern.Description,
+			UserCommand:    make(chan string, 1),
+			WorkerResponse: make(chan string),
+			ErrorChan:      make(chan error),
+		}
+		primaryWorkers = append(primaryWorkers, worker)
+	}
+
+	// First flatten and write out of scope hosts to file
+	// Leave in-scope files until host discovery avoided or completed
+	var excludeHosts []string
+	if wr.cli.ScopeExclude != "" {
+		excludeHosts, err = wr.FlattenScopes(wr.cli.ScopeExclude)
+		if err != nil {
+			fmt.Printf(err.Error())
+			return
+		}
+	}
+	exclude, err := files.WriteSliceToFile(cwd, scopeDir, excludeFile, excludeHosts)
+
+	// Initialise CleanupPermissions() to always run when program exits
+	defer func(reports, scopes string) {
+		err := wr.CleanupPermissions(reports, scopes)
+		if err != nil {
+			log.Printf("Error during CleanupPermissions(): %v", err)
+		}
+	}(reportPath, scopeDir)
+
+	// If discovery is run, this will create a list of hosts to be added to scope.
+	// Otherwise, use user-supplied list verbatim
+
+	// First get user-supplied scope
+	var inScope []string
+	if wr.cli.ScopeFiles != "" {
+		inScope, err = wr.FlattenScopes(wr.cli.ScopeFiles)
+		if err != nil {
+			fmt.Printf(err.Error())
+			return
+		}
+	}
+
+	var discWg *sync.WaitGroup
+	if wr.cli.RunDiscovery {
+		discWg = wr.DiscoveryWorkersInit(inScope, exclude)
+		go func() {
+			discWg.Wait()
+			log.Println("All discovery workers done.")
+			close(fullScan)
+		}()
+	} else {
+		// If no discovery, write scope to file straight away
+		inScopeFile, err = files.WriteSliceToFile(cwd, scopeDir, inScopeFile, inScope)
+		close(fullScan)
+	}
+
+	project.InScopeFile = inScopeFile
+	project.Workers = primaryWorkers
+	project.ReportDir = reportPath
+
+	wg := wr.StartWorkers(project, fullScan, batchSize)
+
+	wr.SetupSignalHandler(project.Workers, sigCh)
+	wr.DrainWorkerErrors(project.Workers, errCh)
+	wr.ListenToWorkerErrors(project.Workers, errCh)
+
+	// 4. Wait until all primary workers finish
+	wg.Wait()
+	log.Println("All primaryWorkers have stopped. Exiting now.")
+}
+
 // HostDiscoveryScan initiates ICMP and port check discovery.
-// This runs one nmap -sn scan per host.
+// This runs one nmap scan per host:
+// nmap -sn -PS22,80,443,3389 -PA80,443 -PU40125 -PY80,443 -PE -PP -PM -T4 -v --discovery-ignore-rst 192.168.1.1
 func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	for i := range workers {
@@ -107,7 +253,7 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 			w.Args = append(w.Args, "--excludefile")
 			w.Args = append(w.Args, exclude)
 		}
-		// Only initialize if not set (optional safety)
+		// Only initialize if not set
 		if w.UserCommand == nil {
 			w.UserCommand = make(chan string, 1)
 		}
@@ -123,63 +269,18 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 	return &wg
 }
 
-// PortOpenOrClosedDiscovery checks for at least one TCP or UDP port being open or closed
-func (wr *wranglerRepository) PortOpenOrClosedDiscovery(project *Project, targets []string, protocol string, topPorts int) (*sync.WaitGroup, error) {
-	var wg sync.WaitGroup
-	protocols := map[string]string{"tcp": "-sT", "udp": "-sU"}
-
-	for i, target := range targets {
-		wg.Add(1)
-
-		proto, ok := protocols[protocol]
-		if !ok {
-			return nil, fmt.Errorf("%s is a not a valid protocol. Use 'tcp' or 'udp'", protocol)
-		}
-
-		w := &Worker{
-			ID:     i,
-			Type:   "nmap",
-			Target: target,
-			Args:   []string{proto, target},
-		}
-
-		var portLimit string
-		if proto == "tcp" {
-			w.Timeout = TCPTimeoutMins
-			portLimit = strconv.Itoa(topPorts)
-		} else {
-			w.Timeout = UDPTimeoutMins
-			portLimit = strconv.Itoa(topPorts)
-		}
-
-		portArgs := []string{"--top-ports", portLimit}
-		w.Args = append(w.Args, portArgs...)
-
-		if project.ExcludeScopeFile != "" {
-			w.Args = append(w.Args, "--excludefile")
-			w.Args = append(w.Args, project.ExcludeScopeFile)
-		}
-
-		w.UserCommand = make(chan string, 1)
-		w.WorkerResponse = make(chan string)
-		w.ErrorChan = make(chan error)
-
-		go worker(w, &wg)
-		w.UserCommand <- "run"
-	}
-	return &wg, nil
-}
-
 // StartWorkers spins up all workers in goroutines. Each worker listens for commands
 // on its UserCommand channel and sends results on its WorkerResponse channel.
 func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, size int) *sync.WaitGroup {
 	var wg sync.WaitGroup
+	allConfirmed := make([]string, 0)
 
 	for {
 		batch := helpers.ReadNTargetsFromChannel(fullScan, size)
 		if len(batch) == 0 {
 			break
 		}
+		allConfirmed = append(allConfirmed, batch...)
 
 		for i := range p.Workers {
 			wg.Add(1)
