@@ -79,7 +79,12 @@ func WriteFile(fullPath string, content []string) error {
 	return nil
 }
 
-func SetFileAndDirPermsRecursive(nonRootUser, rootPath, filePath string) error {
+func SetFileAndDirPermsRecursive(nonRootUser, filePath string) error {
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return err
+	}
+
 	usr, err := user.Lookup(nonRootUser)
 	if err != nil {
 		log.Fatalf("Failed to look up user %q: %v", nonRootUser, err)
@@ -99,8 +104,7 @@ func SetFileAndDirPermsRecursive(nonRootUser, rootPath, filePath string) error {
 	}
 
 	// Recursively walk the directory
-	walkPath := path.Join(rootPath, filePath)
-	err = filepath.Walk(walkPath, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.Walk(filePath, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -118,10 +122,8 @@ func SetFileAndDirPermsRecursive(nonRootUser, rootPath, filePath string) error {
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("Error walking the path %q: %v", rootPath, err)
+		log.Fatalf("Error walking the path %q: %v", filePath, err)
 		return err
 	}
-
-	log.Printf("Successfully changed ownership of %q to user %q", rootPath, nonRootUser)
 	return nil
 }

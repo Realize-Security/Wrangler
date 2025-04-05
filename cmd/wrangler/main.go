@@ -7,7 +7,6 @@ import (
 )
 
 var (
-	wr      wrangler.WranglerRepository
 	project *wrangler.Project
 )
 
@@ -22,7 +21,7 @@ func main() {
 		}),
 	)
 
-	// Initialise anew project
+	// Initialise a new project
 	wr := wrangler.NewWranglerRepository(cli)
 	project = wr.NewProject()
 	wr.ProjectInit(project)

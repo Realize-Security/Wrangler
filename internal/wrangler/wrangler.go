@@ -22,7 +22,7 @@ import (
 const WorkerStop = "STOP"
 
 var (
-	scopeDir    = "./assessment_scope/"
+	scopeDir    = "assessment_scope"
 	inScopeFile = "in_scope.txt"
 	excludeFile = "out_of_scope.txt"
 	nonRootUser = ""
@@ -146,6 +146,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 	}
 	projectRoot = cwd
 	nonRootUser = wr.cli.NonRootUser
+	scopeDir = path.Join(cwd, scopeDir)
 
 	// Create the report directory
 	reportPath, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)

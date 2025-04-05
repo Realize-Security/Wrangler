@@ -45,7 +45,7 @@ func (wr *wranglerRepository) CleanupPermissions(reports, scopes string) error {
 		if p == "" {
 			continue
 		}
-		err := files.SetFileAndDirPermsRecursive(nonRootUser, projectRoot, p)
+		err := files.SetFileAndDirPermsRecursive(nonRootUser, p)
 		if err != nil {
 			log.Printf("failed to set permissions for %s: %s", p, err.Error())
 			return err
