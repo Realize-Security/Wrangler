@@ -6,34 +6,38 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `fullScan`.
 // Otherwise, we send it to `unknownHosts`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(
-	workers []Worker,
-	unknownHosts, fullScan chan<- string,
-) {
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []Worker, unknownHosts, fullScan chan<- string) {
+	var wg sync.WaitGroup
+	wg.Add(len(workers))
+
 	for _, w := range workers {
-		// capture w in closure
 		w := w
 		go func() {
+			defer wg.Done()
 			for resp := range w.WorkerResponse {
-				log.Printf("[Worker %d] %s\n", w.ID, resp)
-
-				// If the output has "Host is up (", we consider it "confirmed"
 				if strings.Contains(resp, "Host is up (") {
 					fullScan <- w.Target
-					finalisedTargets = append(finalisedTargets, w.Target)
-					continue
+				} else {
+					unknownHosts <- w.Target
 				}
-				// Otherwise, mark unknown
-				unknownHosts <- w.Target
 			}
 		}()
 	}
+
+	// Wait for all goroutines to finish sending
+	go func() {
+		wg.Wait()
+		// Now it's safe to close these channels, because no one will send anymore
+		close(fullScan)
+		close(unknownHosts)
+	}()
 }
 
 // CleanupPermissions adjusts file/directory ownership/permissions recursively.

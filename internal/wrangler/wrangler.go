@@ -334,12 +334,10 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 			break
 		}
 
-		// For each primary worker, set up arguments and run once
 		for i := range p.Workers {
 			wg.Add(1)
 			w := &p.Workers[i]
 
-			// Possibly add some arguments
 			w.Args = append(w.Args, "-T4", "-iL", p.InScopeFile)
 			if p.ExcludeScopeFile != "" {
 				w.Args = append(w.Args, "--excludefile", p.ExcludeScopeFile)
@@ -349,12 +347,11 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 			reportPath := path.Join(p.ReportDir, reportName)
 			w.Args = append(w.Args, "-oA", reportPath)
 
-			// Kick off the goroutine
 			go worker(w, &wg)
 
 			// Send "run" => the worker will do exactly one run, then exit
 			w.UserCommand <- "run"
-			close(w.UserCommand) // no more commands
+			//close(w.UserCommand)
 		}
 	}
 	return &wg
