@@ -102,14 +102,14 @@ type wranglerRepository struct {
 // NewWranglerRepository constructs our repository.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
 
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
 	args, err := serializers.LoadScansFromYAML(cli.PatternFile)
 	if err != nil {
 		log.Printf("unable to load scans: %s", err.Error())
-		// Decide whether to return or keep going based on your preference
+		os.Exit(1)
 	}
 	log.Printf("Loaded %d scans from YAML file", len(args))
-
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -117,6 +117,10 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	}
 	projectRoot = cwd
 	nonRootUser = cli.NonRootUser
+	if cli.BatchSize > 0 {
+		fmt.Printf("Nmap batch size set to: %d", cli.BatchSize)
+		batchSize = cli.BatchSize
+	}
 	return &wranglerRepository{
 		cli: cli,
 	}

@@ -7,6 +7,6 @@ type CLI struct {
 	ScopeExclude string `name:"exclude" help:"ExcludeScopeFile from scans" type:"path"`
 	Output       string `name:"output" help:"Output folder (defaults to stdout)"`
 	PatternFile  string `name:"scan-patterns" help:"YML file containing scan patterns"`
-	//BatchSize    string `name:"batch-size" help:"Number of hosts to add to Nmap batches" required:""`
-	RunDiscovery bool `name:"discover" help:"Run ICMP and port knocking checks to establish host availability"`
+	BatchSize    int    `name:"batch-size" help:"Number of hosts to add to Nmap batches"`
+	RunDiscovery bool   `name:"discover" help:"Run ICMP and port knocking checks to establish host availability"`
 }
