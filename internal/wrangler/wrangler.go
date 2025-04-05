@@ -172,39 +172,39 @@ func (wr *wranglerRepository) PortOpenOrClosedDiscovery(project *Project, target
 
 // StartWorkers spins up all workers in goroutines. Each worker listens for commands
 // on its UserCommand channel and sends results on its WorkerResponse channel.
-func (wr *wranglerRepository) StartWorkers(project *Project, fullScan <-chan string, batchSize int) *sync.WaitGroup {
-	var wgMaster sync.WaitGroup
+func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, size int) *sync.WaitGroup {
+	var wg sync.WaitGroup
 
 	for {
-		batch := helpers.ReadNTargetsFromChannel(fullScan, batchSize)
+		batch := helpers.ReadNTargetsFromChannel(fullScan, size)
 		if len(batch) == 0 {
 			break
 		}
 
-		for i := range project.Workers {
-			wgMaster.Add(1)
-			w := &project.Workers[i]
+		for i := range p.Workers {
+			wg.Add(1)
+			w := &p.Workers[i]
 			// Add additional tool arguments
 			w.Args = append(w.Args, "-T4")
 
 			w.Args = append(w.Args, "-iL")
-			w.Args = append(w.Args, project.InScopeFile)
+			w.Args = append(w.Args, p.InScopeFile)
 
-			if project.ExcludeScopeFile != "" {
+			if p.ExcludeScopeFile != "" {
 				w.Args = append(w.Args, "--excludefile")
-				w.Args = append(w.Args, project.ExcludeScopeFile)
+				w.Args = append(w.Args, p.ExcludeScopeFile)
 			}
 
 			reportName := helpers.SpacesToUnderscores(w.Description)
-			workerReport := path.Join(project.ReportDir, reportName)
+			workerReport := path.Join(p.ReportDir, reportName)
 			w.Args = append(w.Args, "-oA")
 			w.Args = append(w.Args, workerReport)
 
-			go worker(w, &wgMaster)
+			go worker(w, &wg)
 			w.UserCommand <- "run"
 		}
 	}
-	return &wgMaster
+	return &wg
 }
 
 // worker continuously reads from worker.UserCommand, runs the external command
