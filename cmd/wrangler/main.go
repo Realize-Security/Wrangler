@@ -20,12 +20,12 @@ import (
 )
 
 var (
-	scopeDirectory = "./assessment_scope/"
-	inScopeFile    = "in_scope.txt"
-	outOfScopeFile = "out_of_scope.txt"
-	nonRootUser    = ""
-	projectRoot    = ""
-	scanBatchSize  = 200
+	scopeDir    = "./assessment_scope/"
+	inScopeFile = "in_scope.txt"
+	excludeFile = "out_of_scope.txt"
+	nonRootUser = ""
+	projectRoot = ""
+	batchSize   = 200
 )
 
 // Set up channels & listeners needed by all workflows
@@ -72,12 +72,12 @@ func main() {
 	nonRootUser = cli.NonRootUser
 
 	// Load primary primaryWorkers from file
-	scanArgs, err := loadPatternsFromYAML(cli.PatternFile)
+	args, err := loadPatternsFromYAML(cli.PatternFile)
 	if err != nil {
 		log.Printf("unable to load scans: %s", err.Error())
 		// Decide whether to return or keep going based on your preference
 	}
-	log.Printf("Loaded %d scans from YAML file", len(scanArgs))
+	log.Printf("Loaded %d scans from YAML file", len(args))
 
 	reportPath, err := createReportDirectory(cli.Output, cli.ProjectName)
 	if err != nil {
@@ -87,7 +87,7 @@ func main() {
 
 	//Initialise primary primaryWorkers
 	var primaryWorkers []wrangler.Worker
-	for i, pattern := range scanArgs {
+	for i, pattern := range args {
 		worker := wrangler.Worker{
 			ID:             i,
 			Type:           pattern.Tool,
@@ -103,15 +103,15 @@ func main() {
 
 	// First flatten and write out of scope hosts to file
 	// Leave in-scope files until host discovery avoided or completed
-	var excludeScope []string
+	var excludeHosts []string
 	if cli.ScopeExclude != "" {
-		excludeScope, err = flattenScopes(cli.ScopeExclude)
+		excludeHosts, err = flattenScopes(cli.ScopeExclude)
 		if err != nil {
 			fmt.Printf(err.Error())
 			return
 		}
 	}
-	exclude, err := files.WriteSliceToFile(cwd, scopeDirectory, outOfScopeFile, excludeScope)
+	exclude, err := files.WriteSliceToFile(cwd, scopeDir, excludeFile, excludeHosts)
 
 	// Initialise cleanupPermissions() to always run when program exits
 	defer func(reports, scopes string) {
@@ -119,7 +119,7 @@ func main() {
 		if err != nil {
 			log.Printf("Error during cleanupPermissions(): %v", err)
 		}
-	}(reportPath, scopeDirectory)
+	}(reportPath, scopeDir)
 
 	// Initialise anew project
 	wranglerRepo = wrangler.NewWranglerRepository()
@@ -138,17 +138,17 @@ func main() {
 		}
 	}
 
-	var wgDisc *sync.WaitGroup
+	var discWg *sync.WaitGroup
 	if cli.RunDiscovery {
-		wgDisc = initialiseDiscoveryWorkers(inScope)
+		discWg = discoveryWorkersInit(inScope)
 		go func() {
-			wgDisc.Wait()
+			discWg.Wait()
 			log.Println("All discovery workers done.")
 			close(fullScan)
 		}()
 	} else {
 		// If no discovery, write scope to file straight away
-		inScopeFile, err = files.WriteSliceToFile(cwd, scopeDirectory, inScopeFile, inScope)
+		inScopeFile, err = files.WriteSliceToFile(cwd, scopeDir, inScopeFile, inScope)
 		close(fullScan)
 	}
 
@@ -157,7 +157,7 @@ func main() {
 	project.ReportDir = reportPath
 
 	wranglerRepo.ProjectInit(project)
-	wg := wranglerRepo.StartWorkers(project, fullScan, scanBatchSize)
+	wg := wranglerRepo.StartWorkers(project, fullScan, batchSize)
 
 	setupSignalHandler(project.Workers, sigCh)
 	drainWorkerErrors(project.Workers, errCh)
@@ -239,7 +239,7 @@ func flattenScopes(paths string) ([]string, error) {
 	return final, nil
 }
 
-func initialiseDiscoveryWorkers(inScope []string) *sync.WaitGroup {
+func discoveryWorkersInit(inScope []string) *sync.WaitGroup {
 	unconfirmed := make(chan string)
 	var w []wrangler.Worker
 	for i, target := range inScope {
@@ -253,7 +253,7 @@ func initialiseDiscoveryWorkers(inScope []string) *sync.WaitGroup {
 			ErrorChan:      make(chan error),
 		})
 	}
-	unifyDiscoveryResponseReading(w, unconfirmed, fullScan)
+	discoveryResponseMonitor(w, unconfirmed, fullScan)
 	wg := wranglerRepo.HostDiscoveryScan(w, project.ExcludeScopeFile)
 
 	// Keep your error watchers
@@ -261,16 +261,16 @@ func initialiseDiscoveryWorkers(inScope []string) *sync.WaitGroup {
 	listenToWorkerErrors(w, errCh)
 
 	// The rest is the same
-	go batchProcessDiscovery(unconfirmed, scanBatchSize)
+	go batchProcessDiscovery(unconfirmed, batchSize)
 	workerTimeout(w)
 	setupSignalHandler(w, sigCh)
 
 	return wg
 }
 
-func unifyDiscoveryResponseReading(
+func discoveryResponseMonitor(
 	workers []wrangler.Worker,
-	unconfirmedHostStatus, fullScan chan<- string,
+	unknownHosts, fullScan chan<- string,
 ) {
 	for _, w := range workers {
 		w := w
@@ -289,17 +289,17 @@ func unifyDiscoveryResponseReading(
 					w.UserCommand <- wrangler.WorkerStop
 					continue
 				}
-				unconfirmedHostStatus <- w.Target
+				unknownHosts <- w.Target
 			}
 		}()
 	}
 }
 
 // batchProcessDiscovery processes additional discover for discovery workgroups
-func batchProcessDiscovery(unconfirmedHosts <-chan string, n int) {
+func batchProcessDiscovery(unknownHosts <-chan string, n int) {
 	var wgMaster []*sync.WaitGroup
 	for {
-		batch := helpers.ReadNTargetsFromChannel(unconfirmedHosts, n)
+		batch := helpers.ReadNTargetsFromChannel(unknownHosts, n)
 		if len(batch) == 0 {
 			break
 		}
@@ -323,24 +323,24 @@ func batchProcessDiscovery(unconfirmedHosts <-chan string, n int) {
 // Report Directory & Cleanup
 //------------------------------------------------------
 
-func createReportDirectory(outputDir, projectName string) (string, error) {
-	var reportPath string
-	if outputDir != "" {
+func createReportDirectory(dir, projectName string) (string, error) {
+	var report string
+	if dir != "" {
 		wd, err := os.Getwd()
 		if err != nil {
 			log.Fatal(err)
 		}
-		reportPath = path.Join(wd, outputDir, helpers.SpacesToUnderscores(projectName))
+		report = path.Join(wd, dir, helpers.SpacesToUnderscores(projectName))
 
-		_, err = os.Stat(reportPath)
+		_, err = os.Stat(report)
 		if err != nil {
-			err = files.CreateDir(reportPath)
+			err = files.CreateDir(report)
 			if err != nil {
 				return "", err
 			}
 		}
 	}
-	return reportPath, nil
+	return report, nil
 }
 
 func cleanupPermissions(reports, scopes string) error {
@@ -364,26 +364,26 @@ func cleanupPermissions(reports, scopes string) error {
 // Goroutine Helpers
 //------------------------------------------------------
 
-func isOpenOrClosedButNotFiltered(resp string) bool {
-	return (strings.Contains(resp, "open") || strings.Contains(resp, "closed")) &&
-		!strings.Contains(resp, "filtered")
-}
-
-// onePortOpenOrClosed listens for a string to indicate a host is active during a ping scan.
-// Adds valid workers to a hostsUp up chan to be fed into scanning
-func onePortOpenOrClosed(workers []wrangler.Worker, fullScan chan<- string) {
-	for _, w := range workers {
-		w := w
-		go func() {
-			for resp := range w.WorkerResponse {
-				if (strings.Contains(resp, "open") || strings.Contains(resp, "closed")) && !strings.Contains(resp, "filtered") {
-					fullScan <- w.Target
-					w.UserCommand <- wrangler.WorkerStop
-				}
-			}
-		}()
-	}
-}
+//func isOpenOrClosedButNotFiltered(resp string) bool {
+//	return (strings.Contains(resp, "open") || strings.Contains(resp, "closed")) &&
+//		!strings.Contains(resp, "filtered")
+//}
+//
+//// onePortOpenOrClosed listens for a string to indicate a host is active during a ping scan.
+//// Adds valid workers to a hostsUp up chan to be fed into scanning
+//func onePortOpenOrClosed(workers []wrangler.Worker, fullScan chan<- string) {
+//	for _, w := range workers {
+//		w := w
+//		go func() {
+//			for resp := range w.WorkerResponse {
+//				if (strings.Contains(resp, "open") || strings.Contains(resp, "closed")) && !strings.Contains(resp, "filtered") {
+//					fullScan <- w.Target
+//					w.UserCommand <- wrangler.WorkerStop
+//				}
+//			}
+//		}()
+//	}
+//}
 
 // workerTimeout cancels workers which exceed a set (optional) duration
 func workerTimeout(workers []wrangler.Worker) {
