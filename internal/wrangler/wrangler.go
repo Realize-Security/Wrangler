@@ -352,7 +352,7 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 				w.Args = append(w.Args, "--excludefile", p.ExcludeScopeFile)
 			}
 
-			reportName := helpers.SpacesToUnderscores(prefix + "_" + w.Description)
+			reportName := helpers.SpacesToUnderscores(prefix + w.Description)
 			reportPath := path.Join(p.ReportDir, reportName)
 			w.Args = append(w.Args, "-oA", reportPath)
 
