@@ -77,6 +77,9 @@ type Worker struct {
 	// Store the final output & error from the external command
 	Output string
 	Err    error
+
+	// Store the exec.Cmd itself for SIGKILL if needed
+	Cmd *exec.Cmd
 }
 
 // WranglerRepository defines the interface for creating/managing projects.
@@ -98,6 +101,7 @@ type wranglerRepository struct {
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
+	// Listen for SIGINT/SIGTERM so we can gracefully shut down
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	args, err := serializers.LoadScansFromYAML(cli.PatternFile)
@@ -178,7 +182,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 		primaryWorkers = append(primaryWorkers, wk)
 	}
 
-	// Flatten and write exclude file
+	// Flatten & write exclude file
 	var excludeHosts []string
 	if wr.cli.ScopeExclude != "" {
 		excludeHosts, err = wr.FlattenScopes(wr.cli.ScopeExclude)
@@ -191,7 +195,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 
 	// Always run CleanupPermissions() when the program exits
 	defer func(reports, scopes string) {
-		err := wr.CleanupPermissions(reports, scopes) // see channels.go
+		err := wr.CleanupPermissions(reports, scopes)
 		if err != nil {
 			log.Printf("Error during CleanupPermissions(): %v", err)
 		}
@@ -210,14 +214,10 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 	// Possibly run discovery
 	var discWg *sync.WaitGroup
 	if wr.cli.RunDiscovery {
+		// Run discovery; DiscoveryResponseMonitor will close(fullScan)
 		discWg = wr.DiscoveryWorkersInit(inScope, exclude)
-		go func() {
-			discWg.Wait()
-			log.Println("All discovery workers done.")
-			close(fullScan) // signals no more discovered hosts
-		}()
 	} else {
-		// If no discovery, just write user-supplied in-scope to file & close channel
+		// If no discovery, just write user-supplied scope & then close channel
 		inScopeFile, err = files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
 		if err != nil {
 			fmt.Printf("Failed to write in-scope file: %v\n", err)
@@ -240,11 +240,17 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 	wr.DrainWorkerErrors(project.Workers, errCh)
 	wr.ListenToWorkerErrors(project.Workers, errCh)
 
+	// If we used discovery, wait for it to fully finish.
+	if discWg != nil {
+		discWg.Wait()
+		log.Println("All discovery workers have finished.")
+	}
+
 	// Wait for primary workers to finish
 	wg.Wait()
 	log.Println("All primary workers have stopped.")
 
-	// Inspect each worker’s output & error
+	// Debug info if desired
 	if wr.cli.DebugWorkers {
 		for i := range project.Workers {
 			w := &project.Workers[i]
@@ -267,11 +273,9 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 		wg.Add(1)
 		w := &workers[i]
 		w.Command = "nmap"
-
 		if exclude != "" {
 			w.Args = append(w.Args, "--excludefile", exclude)
 		}
-
 		if w.UserCommand == nil {
 			w.UserCommand = make(chan string, 1)
 		}
@@ -284,35 +288,37 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 
 		go func(dw *Worker) {
 			defer wg.Done()
+			defer close(dw.WorkerResponse) // Closes when goroutine exits
 			dw.Started = time.Now()
 
-			for {
-				cmd, ok := <-dw.UserCommand
-				if !ok {
-					dw.Finished = time.Now()
-					return
-				}
-				if cmd == WorkerStop {
-					if dw.CancelFunc != nil {
-						dw.CancelFunc()
-					}
-					dw.Finished = time.Now()
-					return
-				}
-
-				// normal run
-				ctx, cancel := context.WithCancel(context.Background())
-				dw.CancelFunc = cancel
-
-				output, err := runCommandCtx(ctx, dw.Command, dw.Args)
-				dw.WorkerResponse <- output // let DiscoveryResponseMonitor parse it
-
-				if err != nil {
-					dw.ErrorChan <- err
-				} else {
-					dw.ErrorChan <- nil
-				}
+			cmd, ok := <-dw.UserCommand
+			if !ok {
+				dw.Finished = time.Now()
+				return
 			}
+			if cmd == WorkerStop {
+				if dw.CancelFunc != nil {
+					dw.CancelFunc()
+				}
+				if dw.Cmd != nil && dw.Cmd.Process != nil {
+					_ = syscall.Kill(-dw.Cmd.Process.Pid, syscall.SIGKILL)
+				}
+				dw.Finished = time.Now()
+				return
+			}
+
+			// Normal "run" (runs once)
+			ctx, cancel := context.WithCancel(context.Background())
+			dw.CancelFunc = cancel
+			cmdObj, output, err := runCommandCtx(ctx, dw.Command, dw.Args)
+			dw.Cmd = cmdObj
+			dw.WorkerResponse <- output
+			if err != nil {
+				dw.ErrorChan <- err
+			} else {
+				dw.ErrorChan <- nil
+			}
+			dw.Finished = time.Now()
 		}(w)
 
 		w.UserCommand <- "run"
@@ -347,27 +353,28 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 			wg.Add(1)
 			w := &p.Workers[i]
 
-			w.Args = append(w.Args, "-T4", "-iL", f)
+			// Make a copy of original w.Args so we don't keep appending
+			localArgs := append([]string{}, w.Args...)
+			localArgs = append(localArgs, "-T4", "-iL", f)
 			if p.ExcludeScopeFile != "" {
-				w.Args = append(w.Args, "--excludefile", p.ExcludeScopeFile)
+				localArgs = append(localArgs, "--excludefile", p.ExcludeScopeFile)
 			}
 
 			reportName := helpers.SpacesToUnderscores(prefix + w.Description)
 			reportPath := path.Join(p.ReportDir, reportName)
-			w.Args = append(w.Args, "-oA", reportPath)
+			localArgs = append(localArgs, "-oA", reportPath)
 
-			go worker(w, &wg)
+			go worker(w, localArgs, &wg)
 
-			// Send "run" => the worker will do exactly one run, then exit
+			// Trigger the worker to run exactly once
 			w.UserCommand <- "run"
-			//close(w.UserCommand)
 		}
 	}
 	return &wg
 }
 
 // worker reads from UserCommand, runs an external command once, stores output.
-func worker(wk *Worker, wg *sync.WaitGroup) {
+func worker(wk *Worker, args []string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	wk.Started = time.Now()
 
@@ -379,36 +386,51 @@ func worker(wk *Worker, wg *sync.WaitGroup) {
 			return
 		}
 		if cmd == WorkerStop {
+			// Forced shutdown
 			if wk.CancelFunc != nil {
 				wk.CancelFunc()
+			}
+			if wk.Cmd != nil && wk.Cmd.Process != nil {
+				_ = syscall.Kill(-wk.Cmd.Process.Pid, syscall.SIGKILL)
 			}
 			wk.Finished = time.Now()
 			return
 		}
 
-		// Normal "run"
+		// Normal "run" => do it once
 		ctx, cancel := context.WithCancel(context.Background())
 		wk.CancelFunc = cancel
 
-		output, err := runCommandCtx(ctx, wk.Command, wk.Args)
+		cmdObj, output, err := runCommandCtx(ctx, wk.Command, args)
+		wk.Cmd = cmdObj
 		wk.Output = output
 		wk.Err = err
 
-		// This worker runs just once, so close the channel & return
+		// This worker runs just once, so close the channel & exit
 		close(wk.UserCommand)
 		wk.Finished = time.Now()
 		return
 	}
 }
 
-// runCommandCtx executes cmdName with args and returns combined stdout/stderr.
-func runCommandCtx(ctx context.Context, cmdName string, args []string) (string, error) {
+// runCommandCtx executes cmdName with args in its own process group
+// and returns the cmd object, combined stdout/stderr, and error.
+func runCommandCtx(ctx context.Context, cmdName string, args []string) (*exec.Cmd, string, error) {
 	cmd := exec.CommandContext(ctx, cmdName, args...)
+
+	// Put the child in its own process group
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 
-	err := cmd.Run()
-	return out.String(), err
+	if err := cmd.Start(); err != nil {
+		return cmd, "", err
+	}
+	waitErr := cmd.Wait()
+
+	return cmd, out.String(), waitErr
 }

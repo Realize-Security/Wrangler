@@ -4,9 +4,6 @@ import "sync"
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
 func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile string) *sync.WaitGroup {
-	unconfirmed := make(chan string)
-
-	// Build discovery workers
 	var w []Worker
 	for i, target := range inScope {
 		args := []string{
@@ -35,18 +32,15 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	// Start reading from their responses
-	wr.DiscoveryResponseMonitor(w, unconfirmed, fullScan)
+	// Monitor each worker's WorkerResponse & send discovered hosts to fullScan
+	wr.DiscoveryResponseMonitor(w, fullScan)
 
-	// Launch them
+	// Actually start the "discovery" nmap -sn workers
 	wg := wr.HostDiscoveryScan(w, excludeFile)
 
-	// Drain errors & watch for fatal
+	// Error watchers and signals
 	wr.DrainWorkerErrors(w, errCh)
 	wr.ListenToWorkerErrors(w, errCh)
-
-	// Setup optional timeouts, signals
-	wr.WorkerTimeout(w)
 	wr.SetupSignalHandler(w, sigCh)
 
 	return wg
