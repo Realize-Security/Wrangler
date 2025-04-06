@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -186,7 +187,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 			return
 		}
 	}
-	exclude, err := files.WriteSliceToFile(cwd, scopeDir, excludeFile, excludeHosts)
+	exclude, err := files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
 
 	// Always run CleanupPermissions() when the program exits
 	defer func(reports, scopes string) {
@@ -217,7 +218,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 		}()
 	} else {
 		// If no discovery, just write user-supplied in-scope to file & close channel
-		inScopeFile, err = files.WriteSliceToFile(cwd, scopeDir, inScopeFile, inScope)
+		inScopeFile, err = files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
 		if err != nil {
 			fmt.Printf("Failed to write in-scope file: %v\n", err)
 			return
@@ -322,6 +323,7 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 // StartWorkers runs the "primary" scans in batches read from `fullScan`.
 func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, size int) *sync.WaitGroup {
 	var wg sync.WaitGroup
+	var bid int
 
 	if fullScan == nil {
 		// No channel => no discovered hosts => do nothing
@@ -334,16 +336,23 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 			break
 		}
 
+		prefix := "batch_" + strconv.Itoa(bid) + "_"
+		f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, batch)
+		if err != nil {
+			panic("unable to create file")
+		}
+		bid++
+
 		for i := range p.Workers {
 			wg.Add(1)
 			w := &p.Workers[i]
 
-			w.Args = append(w.Args, "-T4", "-iL", p.InScopeFile)
+			w.Args = append(w.Args, "-T4", "-iL", f)
 			if p.ExcludeScopeFile != "" {
 				w.Args = append(w.Args, "--excludefile", p.ExcludeScopeFile)
 			}
 
-			reportName := helpers.SpacesToUnderscores(w.Description)
+			reportName := helpers.SpacesToUnderscores(prefix + "_" + w.Description)
 			reportPath := path.Join(p.ReportDir, reportName)
 			w.Args = append(w.Args, "-oA", reportPath)
 

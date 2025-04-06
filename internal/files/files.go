@@ -36,29 +36,29 @@ func FileLinesToSlice(path string) ([]string, error) {
 	return result, nil
 }
 
-func WriteSliceToFile(projectRoot, scopeDirectory, filename string, targets []string) (string, error) {
-	err := CreateDir(scopeDirectory)
+func WriteSliceToFile(directory, filename string, targets []string) (string, error) {
+	err := CreateDir(directory)
 	if err != nil {
 		return "", fmt.Errorf("unable to create directory: %s", err.Error())
 	}
 
-	fullPath := path.Join(projectRoot, scopeDirectory, filename)
-	err = WriteFile(fullPath, targets)
+	p := path.Join(directory, filename)
+	err = WriteFile(p, targets)
 	if err != nil {
 		return "", fmt.Errorf("unable to create file: %s", err.Error())
 	}
-	return fullPath, nil
+	return p, nil
 }
 
-func CreateDir(dirPath string) error {
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		errDir := os.MkdirAll(dirPath, 0755)
+func CreateDir(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		errDir := os.MkdirAll(path, 0755)
 		if errDir != nil {
 			return errDir
 		}
-		log.Printf("Directory created: %s\n", dirPath)
+		log.Printf("Directory created: %s\n", path)
 	} else {
-		log.Printf("Directory already exists: %s\n", dirPath)
+		log.Printf("Directory already exists: %s\n", path)
 	}
 	return nil
 }
@@ -71,7 +71,7 @@ func WriteFile(fullPath string, content []string) error {
 	defer file.Close()
 
 	for _, line := range content {
-		_, err := file.WriteString(line + "\n")
+		_, err = file.WriteString(line + "\n")
 		if err != nil {
 			return err
 		}
