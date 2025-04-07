@@ -1,5 +1,10 @@
 scan-collection:
   - scan-item:
+      description: "Multi Nmap vulnerability checks"
+      tool: "nmap"
+      args: ["-sV", "--script=vulscan/vulscan.nse" ]
+
+  - scan-item:
       description: "TCP all ports default scripts and versions"
       tool: "nmap"
       args: ["-sTCV", "-p-"]
@@ -10,19 +15,14 @@ scan-collection:
       args: [ "-sT", "-p-", "--script", "ssl-enum-ciphers" ]
 
   - scan-item:
-      description: "TCP common admin interfaces"
+      description: "TCP UDP common admin interfaces"
       tool: "nmap"
-      args: [ "-sT", "-p", "20,21,22,3389,445,111,2049,512,513,514"]
-
-  - scan-item:
-      description: "UDP common admin interfaces"
-      tool: "nmap"
-      args: [ "-sU", "-p", "69" ]
+      args: [ "-sTUV", "-p", "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"]
 
   - scan-item:
       description: "UDP SNMP all scripts"
       tool: "nmap"
-      args: [ "-sU", "-p", "161", "--script", "'snmp-*'" ]
+      args: [ "-sU", "-p", "161", "--script", "snmp-*" ]
 
   - scan-item:
       description: "TCP all ports for SSH algos"
@@ -32,14 +32,19 @@ scan-collection:
   - scan-item:
       description: "TCP FTP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "'ftp-*" ]
+      args: [ "-sT", "-p-", "--script", "ftp-*" ]
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "'rdp-*" ]
+      args: [ "-sT", "-p-", "--script", "rdp-*" ]
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "'smb-*" ]
+      args: [ "-sT", "-p-", "--script", "smb-*" ]
+
+  - scan-item:
+      description: "UDP NTP scripts on all ports"
+      tool: "nmap"
+      args: [ "-sU", "-p", "123", "--script", "ntp-info,ntp-monlist" ]
