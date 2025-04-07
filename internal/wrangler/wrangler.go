@@ -31,11 +31,10 @@ var (
 	batchSize   = 200
 
 	// Channels & global vars
-	fullScan         = make(chan string)
-	sigCh            = make(chan os.Signal, 1)
-	errCh            = make(chan error, 1)
-	finalisedTargets = make([]string, 0) // used by discovery, updated in channels.go
-	primaryWorkers   []Worker
+	fullScan       = make(chan string)
+	sigCh          = make(chan os.Signal, 1)
+	errCh          = make(chan error, 1)
+	primaryWorkers []Worker
 )
 
 // Project holds overall info, plus a slice of Workers we want to run.
@@ -75,8 +74,9 @@ type Worker struct {
 	ErrorChan      chan error
 
 	// Store the final output & error from the external command
-	Output string
-	Err    error
+	Output   string
+	Err      error
+	StdError string
 
 	// Store the exec.Cmd itself for SIGKILL if needed
 	Cmd *exec.Cmd
@@ -101,8 +101,7 @@ type wranglerRepository struct {
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
-	// Listen for SIGINT/SIGTERM so we can gracefully shut down
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 
 	args, err := serializers.LoadScansFromYAML(cli.PatternFile)
 	if err != nil {
@@ -184,18 +183,19 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 
 	// Flatten & write exclude file
 	var excludeHosts []string
+	var exclude string
 	if wr.cli.ScopeExclude != "" {
 		excludeHosts, err = wr.FlattenScopes(wr.cli.ScopeExclude)
 		if err != nil {
 			fmt.Printf(err.Error())
 			return
 		}
+		exclude, err = files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
 	}
-	exclude, err := files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
 
 	// Always run CleanupPermissions() when the program exits
 	defer func(reports, scopes string) {
-		err := wr.CleanupPermissions(reports, scopes)
+		err = wr.CleanupPermissions(reports, scopes)
 		if err != nil {
 			log.Printf("Error during CleanupPermissions(): %v", err)
 		}
@@ -227,7 +227,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 	}
 
 	// Finalize the project
-	project.InScopeFile = inScopeFile
+	project.InScopeFile = path.Join(cwd, scopeDir, inScopeFile)
 	project.ExcludeScopeFile = wr.cli.ScopeExclude
 	project.ReportDir = reportPath
 	project.Workers = primaryWorkers
@@ -310,10 +310,17 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 			// Normal "run" (runs once)
 			ctx, cancel := context.WithCancel(context.Background())
 			dw.CancelFunc = cancel
-			cmdObj, output, err := runCommandCtx(ctx, dw.Command, dw.Args)
+			cmdObj, outStr, errStr, err := runCommandCtx(ctx, dw.Command, dw.Args)
 			dw.Cmd = cmdObj
-			dw.WorkerResponse <- output
+
+			dw.WorkerResponse <- outStr
+
+			// If the command failed, store stderr text in dw.StdError.
 			if err != nil {
+				if errStr != "" {
+					fmt.Println(errStr)
+					dw.StdError = errStr
+				}
 				dw.ErrorChan <- err
 			} else {
 				dw.ErrorChan <- nil
@@ -401,9 +408,10 @@ func worker(wk *Worker, args []string, wg *sync.WaitGroup) {
 		ctx, cancel := context.WithCancel(context.Background())
 		wk.CancelFunc = cancel
 
-		cmdObj, output, err := runCommandCtx(ctx, wk.Command, args)
+		cmdObj, outStr, errStr, err := runCommandCtx(ctx, wk.Command, args)
 		wk.Cmd = cmdObj
-		wk.Output = output
+		wk.Output = outStr
+		wk.StdError = errStr
 		wk.Err = err
 
 		// This worker runs just once, so close the channel & exit
@@ -415,22 +423,20 @@ func worker(wk *Worker, args []string, wg *sync.WaitGroup) {
 
 // runCommandCtx executes cmdName with args in its own process group
 // and returns the cmd object, combined stdout/stderr, and error.
-func runCommandCtx(ctx context.Context, cmdName string, args []string) (*exec.Cmd, string, error) {
-	cmd := exec.CommandContext(ctx, cmdName, args...)
+func runCommandCtx(ctx context.Context, cmdName string, args []string) (cmd *exec.Cmd, stdout string, stderr string, err error) {
 
-	// Put the child in its own process group
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd = exec.CommandContext(ctx, cmdName, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	// Separate buffers for stdout and stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		return cmd, "", err
+		return cmd, "", "", err
 	}
 	waitErr := cmd.Wait()
 
-	return cmd, out.String(), waitErr
+	return cmd, stdoutBuf.String(), stderrBuf.String(), waitErr
 }

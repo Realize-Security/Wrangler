@@ -17,7 +17,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			"-PM",
 			"-T4",
 			"-v",
-			"--discovery-ignore-rst",
+			//"--discovery-ignore-rst",
 			target,
 		}
 		w = append(w, Worker{

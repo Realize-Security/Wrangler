@@ -1,13 +1,14 @@
 package wrangler
 
 import (
-	"Wrangler/internal/files"
 	"fmt"
+	"github.com/shirou/gopsutil/v3/process"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
@@ -44,35 +45,44 @@ func (wr *wranglerRepository) CleanupPermissions(reports, scopes string) error {
 		if p == "" {
 			continue
 		}
-		err := files.SetFileAndDirPermsRecursive(nonRootUser, p)
-		if err != nil {
-			log.Printf("failed to set permissions for %s: %s", p, err.Error())
-			return err
-		}
+		//err := files.SetFileAndDirPermsRecursive(nonRootUser, p)
+		//if err != nil {
+		//	log.Printf("failed to set permissions for %s: %s", p, err.Error())
+		//	return err
+		//}
 	}
 	return nil
 }
 
-// SetupSignalHandler listens for Ctrl+C or kill signals
-// and gracefully stops all workers if such a signal arrives.
 func (wr *wranglerRepository) SetupSignalHandler(workers []Worker, sigCh <-chan os.Signal) {
 	go func() {
-		<-sigCh
-		log.Println("Received interrupt signal, stopping workers...")
-
-		for _, w := range workers {
-			// Cancel the context if set
-			if w.CancelFunc != nil {
-				w.CancelFunc()
-			}
-			// If we have an active Cmd with a process, kill the entire group
-			if w.Cmd != nil && w.Cmd.Process != nil {
-				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
-			}
-			// Send STOP to each worker's channel
-			w.UserCommand <- WorkerStop
+		for sig := range sigCh {
+			log.Printf("Received signal %v, stopping workers...", sig)
+			wr.stopWorkers(workers)
 		}
 	}()
+}
+
+func (wr *wranglerRepository) stopWorkers(workers []Worker) {
+	commands := make(map[string]bool)
+	for _, w := range workers {
+		if w.CancelFunc != nil {
+			w.CancelFunc()
+		}
+		if w.Cmd != nil && w.Cmd.Process != nil {
+			err := syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
+			if err != nil {
+				commands[w.Command] = true
+			}
+		}
+		if w.UserCommand != nil {
+			select {
+			case w.UserCommand <- WorkerStop:
+			case <-time.After(1 * time.Second):
+			}
+		}
+		processWipe(commands)
+	}
 }
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
@@ -85,6 +95,9 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []Worker, errCh chan<- e
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
 					errCh <- fmt.Errorf("worker %d encountered an OS error: %w", w.ID, workerErr)
+					if w.StdError != "" {
+						fmt.Printf("stderror: %s", w.StdError)
+					}
 				}
 			}
 		}()
@@ -109,4 +122,47 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []Worker, errCh <-cha
 			w.UserCommand <- WorkerStop
 		}
 	}()
+}
+
+func killProcessesByName(target string) error {
+	parts := strings.Split(target, "/")
+	target = parts[len(parts)-1]
+	procs, err := process.Processes()
+	if err != nil {
+		return fmt.Errorf("could not list processes: %w", err)
+	}
+
+	var killedCount int
+
+	for _, proc := range procs {
+		pname, err := proc.Name()
+		if err != nil {
+			continue
+		}
+
+		if strings.EqualFold(pname, target) {
+			pid := proc.Pid
+			err := proc.Kill()
+			if err != nil {
+				log.Printf("Failed to kill %s (PID %d): %v", pname, pid, err)
+			} else {
+				log.Printf("Killed %s (PID %d)", pname, pid)
+				killedCount++
+			}
+		}
+	}
+
+	if killedCount == 0 {
+		log.Printf("No processes found with name: %s", target)
+	}
+	return nil
+}
+
+func processWipe(commands map[string]bool) {
+	for key := range commands {
+		err := killProcessesByName(key)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
 }
