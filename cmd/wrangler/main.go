@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	project *wrangler.Project
+	project *models.Project
 )
 
 func main() {

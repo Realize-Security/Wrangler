@@ -1,10 +1,13 @@
 package wrangler
 
-import "sync"
+import (
+	"Wrangler/pkg/models"
+	"sync"
+)
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
 func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile string) *sync.WaitGroup {
-	var w []Worker
+	var w []models.Worker
 	for i, target := range inScope {
 		args := []string{
 			"-sn",
@@ -20,7 +23,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			//"--discovery-ignore-rst",
 			target,
 		}
-		w = append(w, Worker{
+		w = append(w, models.Worker{
 			ID:             i,
 			Type:           "nmap",
 			Target:         target,
@@ -32,8 +35,8 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	// Monitor each worker's WorkerResponse & send discovered hosts to fullScan
-	wr.DiscoveryResponseMonitor(w, fullScan)
+	// Monitor each worker's WorkerResponse & send discovered hosts to serviceEnum
+	wr.DiscoveryResponseMonitor(w, serviceEnum)
 
 	// Actually start the "discovery" nmap -sn workers
 	wg := wr.HostDiscoveryScan(w, excludeFile)

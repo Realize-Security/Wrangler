@@ -31,67 +31,25 @@ var (
 	batchSize   = 200
 
 	// Channels & global vars
+	serviceEnum    = make(chan string)
 	fullScan       = make(chan string)
 	sigCh          = make(chan os.Signal, 1)
 	errCh          = make(chan error, 1)
-	primaryWorkers []Worker
+	primaryWorkers []models.Worker
 )
-
-// Project holds overall info, plus a slice of Workers we want to run.
-type Project struct {
-	ID               int
-	Name             string `validate:"required"`
-	InScopeFile      string `validate:"required"`
-	ExcludeScopeFile string `validate:"required"`
-	ReportDir        string `validate:"required"`
-	Targets          []Target
-	Workers          []Worker
-}
-
-type Target struct {
-	Target    string `validate:"required"`
-	OpenPorts []int
-}
-
-// Worker describes a single worker’s configuration and runtime state.
-type Worker struct {
-	ID          int
-	Type        string
-	Command     string
-	Args        []string
-	Target      string
-	Description string
-
-	// Start/finish times and optional timeout
-	Started    time.Time
-	Finished   time.Time
-	Timeout    time.Duration
-	CancelFunc context.CancelFunc
-
-	// Channels for commands, optional responses, and errors
-	UserCommand    chan string
-	WorkerResponse chan string
-	ErrorChan      chan error
-
-	// Store the final output & error from the external command
-	Output   string
-	Err      error
-	StdError string
-
-	// Store the exec.Cmd itself for SIGKILL if needed
-	Cmd *exec.Cmd
-}
 
 // WranglerRepository defines the interface for creating/managing projects.
 type WranglerRepository interface {
-	NewProject() *Project
-	ProjectInit(project *Project)
-	setupInternal(project *Project)
-	HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup
-	StartWorkers(project *Project, fullScan <-chan string, batchSize int) *sync.WaitGroup
+	NewProject() *models.Project
+	ProjectInit(project *models.Project)
+	setupInternal(project *models.Project)
+	HostDiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup
+	startWorkers(project *models.Project, fullScan <-chan string, batchSize int) *sync.WaitGroup
 	DiscoveryWorkersInit(inScope []string, excludeFile string) *sync.WaitGroup
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
+	startScanProcess(project *models.Project, inScope []string, exclude string)
+	PrimaryScanners(project *models.Project, discWg *sync.WaitGroup)
 }
 
 // wranglerRepository is our concrete implementation of the interface.
@@ -126,8 +84,8 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 }
 
 // NewProject creates a new Project (not yet started).
-func (wr *wranglerRepository) NewProject() *Project {
-	return &Project{
+func (wr *wranglerRepository) NewProject() *models.Project {
+	return &models.Project{
 		Name:             wr.cli.ProjectName,
 		ExcludeScopeFile: wr.cli.ScopeExclude,
 		ReportDir:        wr.cli.Output,
@@ -136,21 +94,23 @@ func (wr *wranglerRepository) NewProject() *Project {
 
 // ProjectInit initializes a Project. This example calls setupInternal() which can
 // optionally run discovery, set up workers, etc.
-func (wr *wranglerRepository) ProjectInit(project *Project) {
+func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 	wr.setupInternal(project)
 	// If you wanted to do additional setup, you could do it here.
 }
 
 // setupInternal does the initial file setup, runs optional discovery, then
-// starts the “primary” workers that read from `fullScan`.
-func (wr *wranglerRepository) setupInternal(project *Project) {
+// starts the “primary” workers that read from `serviceEnum`.
+func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Panic(err)
 	}
-	projectRoot = cwd
+	project.Cwd = cwd
+	//projectRoot = cwd
 	nonRootUser = wr.cli.NonRootUser
 	scopeDir = path.Join(cwd, scopeDir)
+	project.ReportPath = path.Join(cwd, project.ReportDir)
 
 	// Create the report directory
 	reportPath, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
@@ -159,27 +119,7 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 		return
 	}
 
-	// Load patterns from YAML
-	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
-	if err != nil {
-		log.Printf("Unable to load scans: %s", err.Error())
-	}
-	log.Printf("Loaded %d scans from YAML file", len(args))
-
-	// Build "primaryWorkers" from YAML
-	for i, pattern := range args {
-		wk := Worker{
-			ID:             i,
-			Type:           pattern.Tool,
-			Command:        pattern.Tool,
-			Args:           pattern.Args,
-			Description:    pattern.Description,
-			UserCommand:    make(chan string, 1),
-			WorkerResponse: make(chan string),
-			ErrorChan:      make(chan error),
-		}
-		primaryWorkers = append(primaryWorkers, wk)
-	}
+	// Moved patterns from here
 
 	// Flatten & write exclude file
 	var excludeHosts []string
@@ -210,11 +150,17 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 			return
 		}
 	}
+	wr.startScanProcess(project, inScope, exclude)
 
+}
+
+func (wr *wranglerRepository) startScanProcess(project *models.Project, inScope []string, exclude string) {
 	// Possibly run discovery
 	var discWg *sync.WaitGroup
+	var inScopeFile string
+	var err error
 	if wr.cli.RunDiscovery {
-		// Run discovery; DiscoveryResponseMonitor will close(fullScan)
+		// Run discovery; DiscoveryResponseMonitor will close(serviceEnum)
 		discWg = wr.DiscoveryWorkersInit(inScope, exclude)
 	} else {
 		// If no discovery, just write user-supplied scope & then close channel
@@ -223,51 +169,21 @@ func (wr *wranglerRepository) setupInternal(project *Project) {
 			fmt.Printf("Failed to write in-scope file: %v\n", err)
 			return
 		}
-		close(fullScan)
+		close(serviceEnum)
 	}
 
 	// Finalize the project
-	project.InScopeFile = path.Join(cwd, scopeDir, inScopeFile)
+	project.InScopeFile = path.Join(project.Cwd, scopeDir, inScopeFile)
 	project.ExcludeScopeFile = wr.cli.ScopeExclude
-	project.ReportDir = reportPath
-	project.Workers = primaryWorkers
+	project.ReportDir = project.ReportPath
+	//project.Workers = primaryWorkers
 
-	// Start the primary workers
-	wg := wr.StartWorkers(project, fullScan, batchSize)
-
-	// Setup signal handling & error watchers
-	wr.SetupSignalHandler(project.Workers, sigCh)
-	wr.DrainWorkerErrors(project.Workers, errCh)
-	wr.ListenToWorkerErrors(project.Workers, errCh)
-
-	// If we used discovery, wait for it to fully finish.
-	if discWg != nil {
-		discWg.Wait()
-		log.Println("All discovery workers have finished.")
-	}
-
-	// Wait for primary workers to finish
-	wg.Wait()
-	log.Println("All primary workers have stopped.")
-
-	// Debug info if desired
-	if wr.cli.DebugWorkers {
-		for i := range project.Workers {
-			w := &project.Workers[i]
-			fmt.Printf("\n=== Worker %d (%s) ===\n", w.ID, w.Description)
-			fmt.Println("Stdout/Stderr:")
-			fmt.Println(w.Output)
-			if w.Err != nil {
-				fmt.Printf("Error: %v\n", w.Err)
-			} else {
-				fmt.Println("Error: <nil>")
-			}
-		}
-	}
+	enumWg := wr.ServiceEnumeration(project, discWg)
+	wr.PrimaryScanners(project, enumWg)
 }
 
 // HostDiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
-func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string) *sync.WaitGroup {
+func (wr *wranglerRepository) HostDiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Add(1)
@@ -286,7 +202,7 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 			w.ErrorChan = make(chan error)
 		}
 
-		go func(dw *Worker) {
+		go func(dw *models.Worker) {
 			defer wg.Done()
 			defer close(dw.WorkerResponse) // Closes when goroutine exits
 			dw.Started = time.Now()
@@ -333,18 +249,102 @@ func (wr *wranglerRepository) HostDiscoveryScan(workers []Worker, exclude string
 	return &wg
 }
 
-// StartWorkers runs the "primary" scans in batches read from `fullScan`.
-func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, size int) *sync.WaitGroup {
+func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg *sync.WaitGroup) *sync.WaitGroup {
+	w := models.Worker{
+		ID:             1,
+		Type:           "nmap",
+		Command:        "nmap",
+		Description:    "Service enumeration scans on all ports",
+		UserCommand:    make(chan string, 1),
+		WorkerResponse: make(chan string),
+		ErrorChan:      make(chan error),
+	}
+	args := []string{"-sTV", "-p-"}
+	w.Args = append(w.Args, args...)
+	project.Workers = []models.Worker{w}
+
+	// Start the primary workers
+	wg := wr.startWorkers(project, serviceEnum, batchSize)
+
+	// Setup signal handling & error watchers
+	wr.SetupSignalHandler(project.Workers, sigCh)
+	wr.DrainWorkerErrors(project.Workers, errCh)
+	wr.ListenToWorkerErrors(project.Workers, errCh)
+
+	if discWg != nil {
+		discWg.Wait()
+		log.Println("All discovery workers have finished.")
+	}
+
+	wg.Wait()
+	log.Println("Service enumeration workers have stopped.")
+
+	// Debug info if desired
+	if wr.cli.DebugWorkers {
+		debugWorkers(project.Workers)
+	}
+	return wg
+}
+
+func (wr *wranglerRepository) PrimaryScanners(project *models.Project, enumWg *sync.WaitGroup) {
+	// Load patterns from YAML
+	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+	if err != nil {
+		log.Printf("Unable to load scans: %s", err.Error())
+		enumWg.Done()
+		return
+	}
+	log.Printf("Loaded %d scans from YAML file", len(args))
+
+	// Build "primaryWorkers" from YAML
+	for i, pattern := range args {
+		wk := models.Worker{
+			ID:             i,
+			Type:           pattern.Tool,
+			Command:        pattern.Tool,
+			Args:           pattern.Args,
+			Description:    pattern.Description,
+			UserCommand:    make(chan string, 1),
+			WorkerResponse: make(chan string),
+			ErrorChan:      make(chan error),
+		}
+		primaryWorkers = append(primaryWorkers, wk)
+	}
+
+	project.Workers = primaryWorkers
+	// Start the primary workers
+	wg := wr.startWorkers(project, fullScan, batchSize)
+
+	// Setup signal handling & error watchers
+	wr.SetupSignalHandler(project.Workers, sigCh)
+	wr.DrainWorkerErrors(project.Workers, errCh)
+	wr.ListenToWorkerErrors(project.Workers, errCh)
+
+	// If we used discovery, wait for it to fully finish.
+	if enumWg != nil {
+		enumWg.Wait()
+	}
+
+	wg.Wait()
+	log.Println("All primary scanners have stopped.")
+
+	// Debug info if desired
+	if wr.cli.DebugWorkers {
+		debugWorkers(project.Workers)
+	}
+}
+
+// StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
+func (wr *wranglerRepository) startWorkers(p *models.Project, ch <-chan string, size int) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	var bid int
 
-	if fullScan == nil {
-		// No channel => no discovered hosts => do nothing
+	if ch == nil {
 		return &wg
 	}
 
 	for {
-		batch := helpers.ReadNTargetsFromChannel(fullScan, size)
+		batch := helpers.ReadNTargetsFromChannel(ch, size)
 		if len(batch) == 0 {
 			break
 		}
@@ -381,7 +381,7 @@ func (wr *wranglerRepository) StartWorkers(p *Project, fullScan <-chan string, s
 }
 
 // worker reads from UserCommand, runs an external command once, stores output.
-func worker(wk *Worker, args []string, wg *sync.WaitGroup) {
+func worker(wk *models.Worker, args []string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	wk.Started = time.Now()
 
@@ -439,4 +439,18 @@ func runCommandCtx(ctx context.Context, cmdName string, args []string) (cmd *exe
 	waitErr := cmd.Wait()
 
 	return cmd, stdoutBuf.String(), stderrBuf.String(), waitErr
+}
+
+func debugWorkers(workers []models.Worker) {
+	for i := range workers {
+		w := &workers[i]
+		fmt.Printf("\n=== Worker %d (%s) ===\n", w.ID, w.Description)
+		fmt.Println("Stdout/Stderr:")
+		fmt.Println(w.Output)
+		if w.Err != nil {
+			fmt.Printf("Error: %v\n", w.Err)
+		} else {
+			fmt.Println("Error: <nil>")
+		}
+	}
 }

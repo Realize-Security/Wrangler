@@ -1,6 +1,7 @@
 package wrangler
 
 import (
+	"Wrangler/pkg/models"
 	"fmt"
 	"github.com/shirou/gopsutil/v3/process"
 	"log"
@@ -12,8 +13,8 @@ import (
 )
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
-// If the nmap output indicates "Host is up", we send that host to `fullScan`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []Worker, fullScan chan<- string) {
+// If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, serviceEnum chan<- string) {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
 
@@ -23,7 +24,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []Worker, fullSca
 			defer wg.Done()
 			for resp := range w.WorkerResponse {
 				if strings.Contains(resp, "Host is up (") {
-					fullScan <- w.Target
+					serviceEnum <- w.Target
 				}
 			}
 		}()
@@ -32,7 +33,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []Worker, fullSca
 	// Wait for all goroutines to finish sending
 	go func() {
 		wg.Wait()
-		close(fullScan)
+		close(serviceEnum)
 	}()
 }
 
@@ -54,7 +55,7 @@ func (wr *wranglerRepository) CleanupPermissions(reports, scopes string) error {
 	return nil
 }
 
-func (wr *wranglerRepository) SetupSignalHandler(workers []Worker, sigCh <-chan os.Signal) {
+func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh <-chan os.Signal) {
 	go func() {
 		for sig := range sigCh {
 			log.Printf("Received signal %v, stopping workers...", sig)
@@ -63,7 +64,7 @@ func (wr *wranglerRepository) SetupSignalHandler(workers []Worker, sigCh <-chan 
 	}()
 }
 
-func (wr *wranglerRepository) stopWorkers(workers []Worker) {
+func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 	commands := make(map[string]bool)
 	for _, w := range workers {
 		if w.CancelFunc != nil {
@@ -87,7 +88,7 @@ func (wr *wranglerRepository) stopWorkers(workers []Worker) {
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
 // If a non-nil error arrives, we send it to `errCh`.
-func (wr *wranglerRepository) DrainWorkerErrors(workers []Worker, errCh chan<- error) {
+func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh chan<- error) {
 	for _, w := range workers {
 		// capture w in closure
 		w := w
@@ -106,7 +107,7 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []Worker, errCh chan<- e
 
 // ListenToWorkerErrors receives the first error from any worker on `errCh`,
 // logs it, and immediately sends "STOP" (and SIGKILL) to all workers.
-func (wr *wranglerRepository) ListenToWorkerErrors(workers []Worker, errCh <-chan error) {
+func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errCh <-chan error) {
 	go func() {
 		err := <-errCh
 		log.Printf("FATAL: %v", err)

@@ -12,6 +12,7 @@ type ScanItem struct {
 
 type ScanDetails struct {
 	Tool        string   `yaml:"tool"`
+	Service     string   `yaml:"service"`
 	Args        []string `yaml:"args"`
 	Description string   `yaml:"description"`
 }
