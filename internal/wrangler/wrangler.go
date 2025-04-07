@@ -254,7 +254,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg
 		ID:             1,
 		Type:           "nmap",
 		Command:        "nmap",
-		Description:    "Service enumeration scans on all ports",
+		Description:    "HostService enumeration scans on all ports",
 		UserCommand:    make(chan string, 1),
 		WorkerResponse: make(chan string),
 		ErrorChan:      make(chan error),
@@ -277,7 +277,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg
 	}
 
 	wg.Wait()
-	log.Println("Service enumeration workers have stopped.")
+	log.Println("HostService enumeration workers have stopped.")
 
 	// Debug info if desired
 	if wr.cli.DebugWorkers {

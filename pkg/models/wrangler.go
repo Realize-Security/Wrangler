@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// Project holds overall info, plus a slice of Workers we want to run.
 type Project struct {
 	ID               int
 	Name             string `validate:"required"`
@@ -20,11 +19,11 @@ type Project struct {
 }
 
 type Target struct {
-	Host     string
-	Services []Service
+	Host    string
+	Targets []HostService
 }
 
-type Service struct {
+type HostService struct {
 	Service string
 	Port    string
 }
