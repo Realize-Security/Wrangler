@@ -24,8 +24,8 @@ var (
 	batchSize   = 200
 
 	// Channels & global vars
-	serviceEnum    = make(chan string)
-	fullScan       = make(chan string)
+	serviceEnum    = make(chan models.Target)
+	fullScan       = make(chan models.Target)
 	sigCh          = make(chan os.Signal, 1)
 	errCh          = make(chan error, 1)
 	primaryWorkers []models.Worker
@@ -37,8 +37,8 @@ type WranglerRepository interface {
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup
-	startWorkers(project *models.Project, fullScan <-chan string, batchSize int) *sync.WaitGroup
-	DiscoveryWorkersInit(inScope []string, excludeFile string) *sync.WaitGroup
+	startWorkers(p *models.Project, ch <-chan models.Target, size int) *sync.WaitGroup
+	DiscoveryWorkersInit(inScope []string, excludeFile string) (*sync.WaitGroup, chan struct{})
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)

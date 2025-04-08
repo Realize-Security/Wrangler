@@ -1,6 +1,7 @@
 package wrangler
 
 import (
+	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"fmt"
 	"github.com/shirou/gopsutil/v3/process"
@@ -14,27 +15,32 @@ import (
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, serviceEnum chan<- string) {
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, serviceEnum chan<- models.Target) chan struct{} {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
+	done := make(chan struct{})
 
 	for _, w := range workers {
 		w := w
 		go func() {
 			defer wg.Done()
 			for resp := range w.WorkerResponse {
+				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
 				if strings.Contains(resp, "Host is up (") {
-					serviceEnum <- w.Target
+					serviceEnum <- models.Target{Host: w.Target}
+					log.Printf("[Discovery] Found live host: %s", w.Target)
 				}
 			}
 		}()
 	}
 
-	// Wait for all goroutines to finish sending
 	go func() {
 		wg.Wait()
 		close(serviceEnum)
+		log.Println("[Discovery] All responses monitored, serviceEnum closed.")
+		close(done)
 	}()
+	return done
 }
 
 // CleanupPermissions adjusts file/directory ownership/permissions recursively.
@@ -58,7 +64,7 @@ func (wr *wranglerRepository) CleanupPermissions(reports, scopes string) error {
 func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh <-chan os.Signal) {
 	go func() {
 		for sig := range sigCh {
-			log.Printf("Received signal %v, stopping workers...", sig)
+			log.Printf("Received signal %v, stopping workers gracefully", sig)
 			wr.stopWorkers(workers)
 		}
 	}()
@@ -68,12 +74,18 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 	commands := make(map[string]bool)
 	for _, w := range workers {
 		if w.CancelFunc != nil {
-			w.CancelFunc()
+			w.CancelFunc() // Cancel context, but Nmap should already have output
 		}
 		if w.Cmd != nil && w.Cmd.Process != nil {
-			err := syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
+			log.Printf("Sending SIGTERM to worker %d (PID %d)", w.ID, w.Cmd.Process.Pid)
+			err := syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGTERM)
 			if err != nil {
 				commands[w.Command] = true
+			}
+			time.Sleep(3 * time.Second) // Increased wait for output flush
+			if w.Cmd.Process != nil && !w.Cmd.ProcessState.Exited() {
+				log.Printf("Worker %d still running, sending SIGKILL", w.ID)
+				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
 			}
 		}
 		if w.UserCommand != nil {
@@ -82,8 +94,8 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			case <-time.After(1 * time.Second):
 			}
 		}
-		processWipe(commands)
 	}
+	processWipe(commands)
 }
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
@@ -95,10 +107,7 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 		go func() {
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
-					errCh <- fmt.Errorf("worker %d encountered an OS error: %w", w.ID, workerErr)
-					if w.StdError != "" {
-						fmt.Printf("stderror: %s", w.StdError)
-					}
+					errCh <- fmt.Errorf("worker %d encountered an OS error: %w, stderr: %s", w.ID, workerErr, w.StdError)
 				}
 			}
 		}()
@@ -106,22 +115,15 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 }
 
 // ListenToWorkerErrors receives the first error from any worker on `errCh`,
-// logs it, and immediately sends "STOP" (and SIGKILL) to all workers.
 func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errCh <-chan error) {
 	go func() {
 		err := <-errCh
-		log.Printf("FATAL: %v", err)
-
-		// Kill/stop all workers immediately
-		for _, w := range workers {
-			if w.CancelFunc != nil {
-				w.CancelFunc()
-			}
-			if w.Cmd != nil && w.Cmd.Process != nil {
-				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
-			}
-			w.UserCommand <- WorkerStop
-		}
+		log.Printf("FATAL: %v - Stopping all workers as per design", err)
+		wr.stopWorkers(workers)
+		close(serviceEnum) // Ensure closure on error
+		close(fullScan)
+		log.Println("Pipeline halted due to worker failure")
+		os.Exit(1)
 	}()
 }
 
@@ -158,7 +160,6 @@ func killProcessesByName(target string) error {
 	}
 	return nil
 }
-
 func processWipe(commands map[string]bool) {
 	for key := range commands {
 		err := killProcessesByName(key)
@@ -166,4 +167,60 @@ func processWipe(commands map[string]bool) {
 			fmt.Println(err)
 		}
 	}
+	// Log and return instead of exiting
+	log.Println("Process wipe completed, continuing execution")
+}
+
+// MonitorServiceEnum parses each Nmap XML from
+// the service-enumeration stage & pushes open hosts/ports
+// onto `fullScan` channel immediately.
+func (wr *wranglerRepository) MonitorServiceEnum(
+	workers []models.Worker,
+	fullScan chan<- models.Target,
+) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	wg.Add(len(workers)) // We'll have exactly 1 XMLPathsChan read per worker
+
+	for i := range workers {
+		w := &workers[i]
+		go func(w *models.Worker) {
+			defer wg.Done()
+
+			// Block until this worker emits its XML path (or closes)
+			xmlPath, ok := <-w.XMLPathsChan
+			if !ok {
+				return
+			}
+
+			// Now parse the .xml to see what’s open
+			nmapRun, err := nmap.ReadNmapXML(xmlPath)
+			if err != nil {
+				fmt.Printf("unable to parse file: %s\n", xmlPath)
+				w.ErrorChan <- err
+				return
+			}
+
+			// For each host with open ports, push to `fullScan`.
+			for _, host := range nmapRun.Hosts {
+				if host.Status.State == "up" {
+					var openPorts []string
+					for _, p := range host.Ports.Port {
+						if p.State.State == "open" {
+							openPorts = append(openPorts, p.PortID)
+						}
+					}
+					if len(openPorts) > 0 {
+						fmt.Printf("[Parser] Found %s -> Ports: %v\n",
+							host.Addresses[0].Addr, openPorts)
+						t := models.Target{
+							Host:  host.Addresses[0].Addr,
+							Ports: openPorts,
+						}
+						fullScan <- t
+					}
+				}
+			}
+		}(w)
+	}
+	return &wg
 }

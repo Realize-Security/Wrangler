@@ -1,7 +1,6 @@
 package wrangler
 
 import (
-	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"context"
@@ -9,28 +8,42 @@ import (
 	"log"
 	"os"
 	"path"
+	"reflect"
 	"sync"
 	"time"
 )
 
 func (wr *wranglerRepository) startScanProcess(project *models.Project, inScope []string, exclude string) {
 	var discWg *sync.WaitGroup
-	var err error
+	var discoveryDone chan struct{}
 	if wr.cli.RunDiscovery {
-		discWg = wr.DiscoveryWorkersInit(inScope, exclude)
+		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude)
 	} else {
-		inScopeFile, err = files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
-		if err != nil {
-			fmt.Printf("Failed to write in-scope file: %v\n", err)
-			return
-		}
 		close(serviceEnum)
+		discoveryDone = make(chan struct{})
+		close(discoveryDone)
 	}
 
-	enumWg := wr.ServiceEnumeration(project, discWg)
-	//enumWg.Wait()
-	log.Println("Service enumeration workers have completed.")
-	wr.PrimaryScanners(project, enumWg)
+	// Start service enumeration in a goroutine to read serviceEnum immediately
+	var parseWg *sync.WaitGroup
+	go func() {
+		parseWg = wr.ServiceEnumeration(project, discWg, discoveryDone)
+	}()
+
+	// Start primary scanners
+	primaryWg := wr.PrimaryScanners(project, nil)
+
+	// Wait for discovery to complete if running
+	if wr.cli.RunDiscovery {
+		discWg.Wait()   // Wait for discovery workers to finish
+		<-discoveryDone // Wait for DiscoveryResponseMonitor to close serviceEnum
+	}
+
+	// Wait for enumeration and primary scans to complete
+	parseWg.Wait()
+	close(fullScan)
+	primaryWg.Wait()
+	log.Println("[startScanProcess] All scanning steps complete.")
 }
 
 // DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
@@ -49,30 +62,28 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			defer wg.Done()
 			dw.Started = time.Now()
 
-			// Normal "run" (runs once)
 			ctx, cancel := context.WithCancel(context.Background())
 			dw.CancelFunc = cancel
-			defer cancel() // Ensure cleanup
 
-			cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, dw.Command, dw.Args)
+			cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, dw, dw.Args)
 			dw.Cmd = cmdObj
 
 			if startErr != nil {
+				log.Printf("Worker %d: Start failed: %v", dw.ID, startErr)
 				dw.ErrorChan <- startErr
 				dw.WorkerResponse <- ""
-				close(dw.WorkerResponse) // Safe to close here as no further sends
+				close(dw.WorkerResponse)
 				dw.Finished = time.Now()
+				cancel()
 				return
 			}
 
-			// Handle the command output asynchronously
 			go func() {
-				// Wait for the results
 				stdout := <-outChan
 				stderr := <-stderrChan
 				err := <-errChan
 
-				// Send results to channels
+				log.Printf("Worker %d: Sending %d bytes to WorkerResponse", dw.ID, len(stdout))
 				dw.WorkerResponse <- stdout
 				if err != nil {
 					if stderr != "" {
@@ -84,25 +95,20 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 					dw.ErrorChan <- nil
 				}
 				dw.Finished = time.Now()
-
-				// Close WorkerResponse after all sends are complete
 				close(dw.WorkerResponse)
+				cancel()
 			}()
 
-			// Trigger the worker
-			select {
-			case dw.UserCommand <- "run":
-			default:
-				// Channel not ready, proceed anyway
-			}
+			dw.UserCommand <- "run"
+			time.Sleep(5 * time.Second) // Ensure Nmap runs
 		}(w)
 	}
 	return &wg
 }
 
-func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg *sync.WaitGroup) *sync.WaitGroup {
+func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg *sync.WaitGroup, discoveryDone <-chan struct{}) *sync.WaitGroup {
 	enumDir := path.Join(project.ReportDir, project.Name, "enumeration")
-	err := os.MkdirAll(enumDir, 600)
+	err := os.MkdirAll(enumDir, 0700)
 	if err != nil {
 		fmt.Printf("failed to create enum dir: %s", err)
 		return nil
@@ -112,50 +118,69 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project, discWg
 		ID:             1,
 		Type:           "nmap",
 		Command:        "nmap",
-		Description:    "Host service  all ports enumeration scans",
+		Description:    "Host service all ports enumeration scans",
 		UserCommand:    make(chan string, 1),
 		WorkerResponse: make(chan string),
 		ErrorChan:      make(chan error),
+		XMLPathsChan:   make(chan string),
 	}
-
-	args := []string{"-sTV", "-p-"}
-	w.Args = append(w.Args, args...)
+	w.Args = []string{"-sTV", "-p-"}
 	project.Workers = []models.Worker{w}
 
-	wg := wr.startWorkers(project, serviceEnum, batchSize)
+	// Start enumeration workers immediately, reading from serviceEnum
+	log.Println("[ServiceEnumeration] Starting enumeration workers...")
+	enumWg := wr.startWorkers(project, serviceEnum, batchSize)
+	if enumWg == nil || reflect.ValueOf(*enumWg).FieldByName("state").IsZero() {
+		log.Println("[ServiceEnumeration] No targets received from discovery, skipping enumeration")
+	} else {
+		// Wait for enumeration workers to finish processing
+		enumWg.Wait()
+		log.Println("[ServiceEnumeration] All enumeration processes ended.")
+	}
 
-	// Setup signal handling & error watchers
+	// Parse results
+	parseWg := wr.MonitorServiceEnum(project.Workers, fullScan)
 	wr.SetupSignalHandler(project.Workers, sigCh)
 	wr.DrainWorkerErrors(project.Workers, errCh)
 	wr.ListenToWorkerErrors(project.Workers, errCh)
 
+	// If discovery is running, wait for it to signal completion in the background
 	if discWg != nil {
-		discWg.Wait()
-		log.Println("All discovery workers have finished.")
+		go func() {
+			discWg.Wait()
+			<-discoveryDone
+			log.Println("[ServiceEnumeration] Discovery fully completed.")
+		}()
 	}
 
-	//wg.Wait()
-	//log.Println("HostService enumeration workers have stopped.")
+	log.Println("[ServiceEnumeration] Returning parseWg")
+	return parseWg
+}
 
-	if wr.cli.DebugWorkers {
-		debugWorkers(project.Workers)
-	}
-	return wg
+// Helper function to signal when serviceEnum is closed
+func serviceEnumClosed() <-chan struct{} {
+	closed := make(chan struct{})
+	go func() {
+		for range serviceEnum {
+			// Drain the channel until closed
+		}
+		close(closed)
+	}()
+	return closed
 }
 
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project, enumWg *sync.WaitGroup) *sync.WaitGroup {
 	// Load patterns from YAML
 	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
-		log.Printf("Unable to load scans: %s", err.Error())
-		//enumWg.Done()
+		log.Printf("Unable to load scans: %s", err)
 		return nil
 	}
-	log.Printf("Loaded primary %d scans from YAML", len(args))
+	log.Printf("Loaded %d primary scans from YAML", len(args))
 
-	// Build "primaryWorkers" from YAML
+	// Build workers for each pattern
 	for i, pattern := range args {
-		wk := models.Worker{
+		w := models.Worker{
 			ID:             i,
 			Type:           pattern.Tool,
 			Command:        pattern.Tool,
@@ -164,31 +189,20 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project, enumWg *s
 			UserCommand:    make(chan string, 1),
 			WorkerResponse: make(chan string),
 			ErrorChan:      make(chan error),
+			XMLPathsChan:   make(chan string),
 		}
-		primaryWorkers = append(primaryWorkers, wk)
+		primaryWorkers = append(primaryWorkers, w)
 	}
 
-	project.Workers = primaryWorkers
+	// Start them reading from fullScan
 	wg := wr.startWorkers(project, fullScan, batchSize)
 
-	// Setup signal handling & error watchers
-	wr.SetupSignalHandler(project.Workers, sigCh)
-	wr.DrainWorkerErrors(project.Workers, errCh)
-	wr.ListenToWorkerErrors(project.Workers, errCh)
+	// Setup signals & error watchers
+	wr.SetupSignalHandler(primaryWorkers, sigCh)
+	wr.DrainWorkerErrors(primaryWorkers, errCh)
+	wr.ListenToWorkerErrors(primaryWorkers, errCh)
 
-	//if enumWg != nil {
-	//	enumWg.Wait()
-	//}
-
-	wg.Wait()
-	log.Println("All primary scanners have completed.")
-
-	if wr.cli.DebugWorkers {
-		debugWorkers(project.Workers)
-	}
+	// We do *not* wait on `enumWg` here, because
+	// we want partial concurrency.
 	return wg
-}
-
-func (wr *wranglerRepository) MapWorkersToTarget(baseWorkers []models.Worker) {
-
 }

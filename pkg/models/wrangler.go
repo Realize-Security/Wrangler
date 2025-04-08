@@ -19,25 +19,21 @@ type Project struct {
 }
 
 type Target struct {
-	Host     string
-	OS       string
-	FQDN     string
-	Services []HostService
-}
-
-type HostService struct {
-	Service string
-	Port    string
+	Host  string
+	OS    string
+	FQDN  string
+	Ports []string
 }
 
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
-	ID          int
-	Type        string
-	Command     string
-	Args        []string
-	Target      string
-	Description string
+	ID            int
+	Type          string
+	Command       string
+	Args          []string
+	Target        string
+	Description   string
+	XMLReportPath string
 
 	// Start/finish times and optional timeout
 	Started    time.Time
@@ -49,6 +45,7 @@ type Worker struct {
 	UserCommand    chan string
 	WorkerResponse chan string
 	ErrorChan      chan error
+	XMLPathsChan   chan string
 
 	// Store the final output & error from the external command
 	Output   string

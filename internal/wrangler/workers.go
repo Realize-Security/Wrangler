@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os/exec"
 	"path"
 	"strconv"
@@ -16,7 +18,7 @@ import (
 )
 
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-func (wr *wranglerRepository) startWorkers(p *models.Project, ch <-chan string, size int) *sync.WaitGroup {
+func (wr *wranglerRepository) startWorkers(p *models.Project, ch <-chan models.Target, size int) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	var bid int
 
@@ -31,7 +33,11 @@ func (wr *wranglerRepository) startWorkers(p *models.Project, ch <-chan string, 
 		}
 
 		prefix := "batch_" + strconv.Itoa(bid) + "_"
-		f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, batch)
+		write := make([]string, 0)
+		for _, target := range batch {
+			write = append(write, target.Host)
+		}
+		f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, write)
 		if err != nil {
 			panic("unable to create file")
 		}
@@ -51,6 +57,7 @@ func (wr *wranglerRepository) startWorkers(p *models.Project, ch <-chan string, 
 			reportName := helpers.SpacesToUnderscores(prefix + w.Description)
 			reportPath := path.Join(p.ReportDir, reportName)
 			localArgs = append(localArgs, "-oA", reportPath)
+			w.XMLReportPath = reportPath + ".xml"
 
 			go worker(w, localArgs, &wg)
 
@@ -87,7 +94,7 @@ func worker(wk *models.Worker, args []string, wg *sync.WaitGroup) {
 		ctx, cancel := context.WithCancel(context.Background())
 		wk.CancelFunc = cancel
 
-		cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, wk.Command, args)
+		cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, wk, args)
 		wk.Cmd = cmdObj
 
 		if startErr != nil {
@@ -107,8 +114,14 @@ func worker(wk *models.Worker, args []string, wg *sync.WaitGroup) {
 			if wk.WorkerResponse != nil {
 				wk.WorkerResponse <- wk.Output
 			}
+
+			if wk.XMLReportPath != "" {
+				wk.XMLPathsChan <- wk.XMLReportPath
+			}
+
 			if wk.ErrorChan != nil {
 				wk.ErrorChan <- wk.Err
+				fmt.Printf("error: %s", wk.Err)
 			}
 
 			wk.Finished = time.Now()
@@ -116,59 +129,72 @@ func worker(wk *models.Worker, args []string, wg *sync.WaitGroup) {
 
 		// Since this worker runs once, close the channel and exit
 		close(wk.UserCommand)
-		return // Exit the loop after starting the command
+		return
 	}
 }
 
 // runCommandCtx executes cmdName with args in its own process group
 // and returns the cmd object, combined stdout/stderr, and error.
-func runCommandCtx(ctx context.Context, cmdName string, args []string) (cmd *exec.Cmd, stdoutChan, stderrChan chan string, errChan chan error, startErr error) {
+func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (cmd *exec.Cmd, stdout, stderr chan string, errs chan error, startErr error) {
+	cmdName := worker.Command
 	cmd = exec.CommandContext(ctx, cmdName, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
+	stdout = make(chan string, 1)
+	stderr = make(chan string, 1)
+	errs = make(chan error, 1)
 
-	// Channels to receive stdout, stderr, and errors
-	stdoutChan = make(chan string, 1)
-	stderrChan = make(chan string, 1)
-	errChan = make(chan error, 1)
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return cmd, nil, nil, nil, fmt.Errorf("stdout pipe failed: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return cmd, nil, nil, nil, fmt.Errorf("stderr pipe failed: %w", err)
+	}
 
-	// Separate buffers for stdout and stderr
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	// Start the command
+	log.Printf("Starting %s with args %v for worker %d", cmdName, args, worker.ID)
 	if startErr = cmd.Start(); startErr != nil {
 		return cmd, nil, nil, nil, startErr
 	}
 
-	// Run the command in a goroutine
 	go func() {
-		defer close(stdoutChan)
-		defer close(stderrChan)
-		defer close(errChan)
+		defer close(stdout)
+		defer close(stderr)
+		defer close(errs)
 
-		// Wait for the command to complete
+		var stdoutBuf, stderrBuf bytes.Buffer
+		stdoutDone := make(chan struct{})
+		stderrDone := make(chan struct{})
+
+		// Stream stdout
+		go func() {
+			io.Copy(&stdoutBuf, stdoutPipe)
+			log.Printf("Worker %d: Captured %d bytes of stdout", worker.ID, stdoutBuf.Len())
+			close(stdoutDone)
+		}()
+
+		go func() {
+			io.Copy(&stderrBuf, stderrPipe)
+			log.Printf("Worker %d: Captured %d bytes of stderr", worker.ID, stderrBuf.Len())
+			close(stderrDone)
+		}()
+
 		waitErr := cmd.Wait()
+		<-stdoutDone
+		<-stderrDone
 
-		// Send the results to the channels
-		stdoutChan <- stdoutBuf.String()
-		stderrChan <- stderrBuf.String()
-		errChan <- waitErr
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.Signaled() {
+					log.Printf("Worker %d: %s terminated by signal %d", worker.ID, cmdName, status.Signal())
+				}
+			}
+		}
+
+		stdout <- stdoutBuf.String()
+		stderr <- stderrBuf.String()
+		errs <- waitErr
 	}()
 
-	return cmd, stdoutChan, stderrChan, errChan, nil
-}
-
-func debugWorkers(workers []models.Worker) {
-	for i := range workers {
-		w := &workers[i]
-		fmt.Printf("\n=== Worker %d (%s) ===\n", w.ID, w.Description)
-		fmt.Println("Stdout/Stderr:")
-		fmt.Println(w.Output)
-		if w.Err != nil {
-			fmt.Printf("Error: %v\n", w.Err)
-		} else {
-			fmt.Println("Error: <nil>")
-		}
-	}
+	return cmd, stdout, stderr, errs, nil
 }
