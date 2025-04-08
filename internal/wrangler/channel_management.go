@@ -120,7 +120,16 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 		err := <-errCh
 		log.Printf("FATAL: %v - Stopping all workers as per design", err)
 		wr.stopWorkers(workers)
-		close(serviceEnum) // Ensure closure on error
+
+		// Close XMLPathsChan for all workers to unblock MonitorServiceEnum
+		for _, w := range workers {
+			if w.XMLPathsChan != nil {
+				close(w.XMLPathsChan)
+				log.Printf("[ListenToWorkerErrors] Closed XMLPathsChan for worker %d", w.ID)
+			}
+		}
+
+		close(serviceEnum)
 		close(fullScan)
 		log.Println("Pipeline halted due to worker failure")
 		os.Exit(1)
@@ -174,33 +183,37 @@ func processWipe(commands map[string]bool) {
 // MonitorServiceEnum parses each Nmap XML from
 // the service-enumeration stage & pushes open hosts/ports
 // onto `fullScan` channel immediately.
-func (wr *wranglerRepository) MonitorServiceEnum(
-	workers []models.Worker,
-	fullScan chan<- models.Target,
-) *sync.WaitGroup {
+func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullScan chan<- models.Target) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	wg.Add(len(workers)) // We'll have exactly 1 XMLPathsChan read per worker
+	if len(workers) == 0 {
+		log.Println("[MonitorServiceEnum] No workers to monitor")
+		return &wg
+	}
+
+	wg.Add(len(workers))
+	log.Printf("[MonitorServiceEnum] Starting to monitor %d workers", len(workers))
 
 	for i := range workers {
 		w := &workers[i]
 		go func(w *models.Worker) {
 			defer wg.Done()
+			log.Printf("[MonitorServiceEnum] Waiting for XML path from worker %d", w.ID)
 
-			// Block until this worker emits its XML path (or closes)
 			xmlPath, ok := <-w.XMLPathsChan
 			if !ok {
+				log.Printf("[MonitorServiceEnum] XMLPathsChan closed for worker %d", w.ID)
 				return
 			}
 
-			// Now parse the .xml to see what’s open
+			log.Printf("[MonitorServiceEnum] Received XML path %s from worker %d", xmlPath, w.ID)
+
 			nmapRun, err := nmap.ReadNmapXML(xmlPath)
 			if err != nil {
-				fmt.Printf("unable to parse file: %s\n", xmlPath)
+				log.Printf("[MonitorServiceEnum] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
 				w.ErrorChan <- err
 				return
 			}
 
-			// For each host with open ports, push to `fullScan`.
 			for _, host := range nmapRun.Hosts {
 				if host.Status.State == "up" {
 					var openPorts []string
@@ -210,16 +223,18 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 						}
 					}
 					if len(openPorts) > 0 {
-						fmt.Printf("[Parser] Found %s -> Ports: %v\n",
-							host.Addresses[0].Addr, openPorts)
+						log.Printf("[MonitorServiceEnum] Found %s -> Ports: %v", host.Addresses[0].Addr, openPorts)
 						t := models.Target{
 							Host:  host.Addresses[0].Addr,
 							Ports: openPorts,
 						}
+						log.Printf("[MonitorServiceEnum] Sending target %s to fullScan", t.Host)
 						fullScan <- t
+						log.Printf("[MonitorServiceEnum] Sent target %s to fullScan", t.Host)
 					}
 				}
 			}
+			log.Println("[MonitorServiceEnum] Finished processing XML for worker %d", w.ID)
 		}(w)
 	}
 	return &wg

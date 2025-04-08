@@ -1,9 +1,8 @@
 scan-collection:
-#  - scan-item:
-#      description: "Multi Nmap vulnerability checks"
-#      service: "*"
-#      tool: "nmap"
-#      args: ["-sV", "--script=vulscan/vulscan.nse" ]
+  - scan-item:
+      tool: "nmap"
+      args: [ "-sV", "-p 80,443", "-oA", "primary_scan" ]
+      description: "Service version scan"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
