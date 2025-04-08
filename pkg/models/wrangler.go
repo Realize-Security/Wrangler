@@ -19,8 +19,10 @@ type Project struct {
 }
 
 type Target struct {
-	Host    string
-	Targets []HostService
+	Host     string
+	OS       string
+	FQDN     string
+	Services []HostService
 }
 
 type HostService struct {

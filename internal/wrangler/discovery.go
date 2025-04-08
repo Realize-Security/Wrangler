@@ -39,7 +39,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 	wr.DiscoveryResponseMonitor(w, serviceEnum)
 
 	// Actually start the "discovery" nmap -sn workers
-	wg := wr.HostDiscoveryScan(w, excludeFile)
+	wg := wr.DiscoveryScan(w, excludeFile)
 
 	// Error watchers and signals
 	wr.DrainWorkerErrors(w, errCh)
