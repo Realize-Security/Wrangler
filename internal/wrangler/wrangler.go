@@ -24,12 +24,15 @@ var (
 	batchSize   = 200
 
 	// Channels & global vars
-	serviceEnum    = make(chan models.Target)
-	fullScan       = make(chan models.Target)
-	sigCh          = make(chan os.Signal, 1)
-	errCh          = make(chan error, 1)
-	primaryWorkers []models.Worker
+	sigCh = make(chan os.Signal, 1)
+	errCh = make(chan error, 1)
+	//primaryWorkers []models.Worker
 )
+
+//var (
+//	serviceEnum chan models.Target
+//	fullScan    chan models.Target
+//)
 
 // WranglerRepository defines the interface for creating/managing projects.
 type WranglerRepository interface {
@@ -47,71 +50,73 @@ type WranglerRepository interface {
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli models.CLI
+	cli         models.CLI
+	serviceEnum chan models.Target
+	fullScan    chan models.Target
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
+	return &wranglerRepository{
+		cli:         cli,
+		serviceEnum: make(chan models.Target, batchSize),
+		fullScan:    make(chan models.Target, batchSize),
+	}
+}
+
+// NewProject creates a new Project (not yet started).
+func (wr *wranglerRepository) NewProject() *models.Project {
+
+	project := &models.Project{
+		Name:             wr.cli.ProjectName,
+		ExcludeScopeFile: wr.cli.ScopeExclude,
+		ReportDirParent:  wr.cli.Output,
+	}
+
+	if wr.cli.BatchSize > 0 {
+		fmt.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
+		batchSize = wr.cli.BatchSize
+	}
+
+	nonRootUser = wr.cli.NonRootUser
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Panic(err)
 	}
-	projectRoot = cwd
-	nonRootUser = cli.NonRootUser
 
-	if cli.BatchSize > 0 {
-		fmt.Printf("Nmap batch size set to: %d\n", cli.BatchSize)
-		batchSize = cli.BatchSize
+	scopeDir = path.Join(cwd, scopeDir)
+
+	reportDirectory, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
+	if err != nil {
+		fmt.Printf("Failed to create report directory: %v\n", err)
+		return nil
 	}
+	project.ReportDirParent = reportDirectory
+	project.ProjectReportPath = path.Join(project.ReportDirParent, project.Name)
 
-	return &wranglerRepository{cli: cli}
-}
+	project.InScopeFile = path.Join(cwd, scopeDir, inScopeFile)
+	project.ExcludeScopeFile = wr.cli.ScopeExclude
 
-// NewProject creates a new Project (not yet started).
-func (wr *wranglerRepository) NewProject() *models.Project {
-	return &models.Project{
-		Name:             wr.cli.ProjectName,
-		ExcludeScopeFile: wr.cli.ScopeExclude,
-		ReportDir:        wr.cli.Output,
-	}
+	return project
 }
 
 // ProjectInit initializes a Project. This example calls setupInternal() which can
 // optionally run discovery, set up workers, etc.
 func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 	wr.setupInternal(project)
-	// If you wanted to do additional setup, you could do it here.
 }
 
 // setupInternal does the initial file setup, runs optional discovery, then
 // starts the “primary” workers that read from `serviceEnum`.
 func (wr *wranglerRepository) setupInternal(project *models.Project) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Panic(err)
-	}
-	project.Cwd = cwd
-	nonRootUser = wr.cli.NonRootUser
-	scopeDir = path.Join(cwd, scopeDir)
-	project.ReportPath = path.Join(cwd, project.ReportDir)
-
-	// Finalize the project
-	project.InScopeFile = path.Join(project.Cwd, scopeDir, inScopeFile)
-	project.ExcludeScopeFile = wr.cli.ScopeExclude
-	project.ReportDir = project.ReportPath
-
 	// Create the report directory
-	reportPath, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
-	if err != nil {
-		fmt.Printf("Failed to create report directory: %v\n", err)
-		return
-	}
 
 	// Flatten & write exclude file
 	var excludeHosts []string
 	var exclude string
+	var err error
 	if wr.cli.ScopeExclude != "" {
 		excludeHosts, err = wr.FlattenScopes(wr.cli.ScopeExclude)
 		if err != nil {
@@ -122,12 +127,12 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	}
 
 	// Always run CleanupPermissions() when the program exits
-	defer func(reports, scopes string) {
-		err = wr.CleanupPermissions(reports, scopes)
-		if err != nil {
-			log.Printf("Error during CleanupPermissions(): %v", err)
-		}
-	}(reportPath, scopeDir)
+	//defer func(reports, scopes string) {
+	//	err = wr.CleanupPermissions(reports, scopes)
+	//	if err != nil {
+	//		log.Printf("Error during CleanupPermissions(): %v", err)
+	//	}
+	//}(reportPath, scopeDir)
 
 	// Flatten user-supplied scope
 	var inScope []string
@@ -138,5 +143,9 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 			return
 		}
 	}
+
+	//fullScan = make(chan models.Target, len(inScope))
+	//serviceEnum = make(chan models.Target, len(inScope))
+
 	wr.startScanProcess(project, inScope, exclude)
 }

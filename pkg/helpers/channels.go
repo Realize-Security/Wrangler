@@ -1,5 +1,7 @@
 package helpers
 
+import "Wrangler/pkg/models"
+
 // ReadNTargetsFromChannel reads n targets in from a channel for processing
 func ReadNTargetsFromChannel[T any](ch <-chan T, n int) []T {
 	targets := make([]T, 0, n)
@@ -13,4 +15,24 @@ func ReadNTargetsFromChannel[T any](ch <-chan T, n int) []T {
 		}
 	}
 	return targets
+}
+
+// ReadNTargetsFromChannelContinuous reads from ch until it closes, sending batches of size or less
+func ReadNTargetsFromChannelContinuous(ch <-chan models.Target, size int) <-chan []models.Target {
+	out := make(chan []models.Target)
+	go func() {
+		defer close(out)
+		batch := make([]models.Target, 0, size)
+		for t := range ch {
+			batch = append(batch, t)
+			if len(batch) == size {
+				out <- batch
+				batch = make([]models.Target, 0, size)
+			}
+		}
+		if len(batch) > 0 {
+			out <- batch
+		}
+	}()
+	return out
 }

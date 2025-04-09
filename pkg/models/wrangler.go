@@ -7,15 +7,14 @@ import (
 )
 
 type Project struct {
-	ID               int
-	Name             string `validate:"required"`
-	InScopeFile      string `validate:"required"`
-	ExcludeScopeFile string `validate:"required"`
-	ReportDir        string `validate:"required"`
-	Targets          []Target
-	Workers          []Worker
-	Cwd              string
-	ReportPath       string
+	ID                int
+	Name              string `validate:"required"`
+	InScopeFile       string `validate:"required"`
+	ExcludeScopeFile  string `validate:"required"`
+	ReportDirParent   string `validate:"required"`
+	Targets           []Target
+	Workers           []Worker
+	ProjectReportPath string
 }
 
 type Target struct {

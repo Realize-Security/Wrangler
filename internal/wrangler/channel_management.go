@@ -27,7 +27,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 			for resp := range w.WorkerResponse {
 				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
 				if strings.Contains(resp, "Host is up (") {
-					serviceEnum <- models.Target{Host: w.Target}
+					wr.serviceEnum <- models.Target{Host: w.Target} // Use wr.serviceEnum
 					log.Printf("[Discovery] Found live host: %s", w.Target)
 				}
 			}
@@ -36,7 +36,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 
 	go func() {
 		wg.Wait()
-		close(serviceEnum)
+		close(wr.serviceEnum) // Close wr.serviceEnum
 		log.Println("[Discovery] All responses monitored, serviceEnum closed.")
 		close(done)
 	}()
@@ -129,8 +129,8 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 			}
 		}
 
-		close(serviceEnum)
-		close(fullScan)
+		close(wr.serviceEnum)
+		close(wr.fullScan)
 		log.Println("Pipeline halted due to worker failure")
 		os.Exit(1)
 	}()
@@ -234,7 +234,7 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullSc
 					}
 				}
 			}
-			log.Println("[MonitorServiceEnum] Finished processing XML for worker %d", w.ID)
+			log.Printf("[MonitorServiceEnum] Finished processing XML for worker %d", w.ID)
 		}(w)
 	}
 	return &wg

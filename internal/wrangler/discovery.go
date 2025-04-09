@@ -30,7 +30,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 	}
 
 	// Start monitoring responses and get done channel
-	discoveryDone := wr.DiscoveryResponseMonitor(w, serviceEnum)
+	discoveryDone := wr.DiscoveryResponseMonitor(w, wr.serviceEnum)
 
 	// Start discovery workers
 	wg := wr.DiscoveryScan(w, excludeFile)
