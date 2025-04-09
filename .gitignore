@@ -26,3 +26,4 @@ go.work.sum
 report_dir
 ip_addresses.txt
 assessment_scope
+./main

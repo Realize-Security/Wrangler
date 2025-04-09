@@ -40,12 +40,12 @@ type WranglerRepository interface {
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup
-	startWorkers(p *models.Project, ch <-chan models.Target, size int) *sync.WaitGroup
+	startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup
 	DiscoveryWorkersInit(inScope []string, excludeFile string) (*sync.WaitGroup, chan struct{})
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	PrimaryScanners(project *models.Project, enumWg *sync.WaitGroup) *sync.WaitGroup
+	PrimaryScanners(project *models.Project) *sync.WaitGroup
 }
 
 // wranglerRepository is our concrete implementation of the interface.

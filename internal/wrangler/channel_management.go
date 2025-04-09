@@ -101,38 +101,53 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
 // If a non-nil error arrives, we send it to `errCh`.
 func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh chan<- error) {
+	// Create a WaitGroup to wait for all readers to finish.
+	var wg sync.WaitGroup
+
+	// Start one goroutine per worker to drain w.ErrorChan
 	for _, w := range workers {
-		// capture w in closure
-		w := w
+		w := w // capture range variable
+		wg.Add(1)
+
 		go func() {
+			defer wg.Done()
+
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
-					errCh <- fmt.Errorf("worker %d encountered an OS error: %w, stderr: %s", w.ID, workerErr, w.StdError)
+					// Forward the error (plus context) into errCh
+					errCh <- fmt.Errorf(
+						"worker %d encountered an OS error: %w, stderr: %s",
+						w.ID, workerErr, w.StdError,
+					)
 				}
 			}
 		}()
 	}
+
+	// Once all worker error channels have been read (wg.Wait),
+	// close errCh so any downstream listener won't block forever.
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
 }
 
 // ListenToWorkerErrors receives the first error from any worker on `errCh`,
 func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errCh <-chan error) {
 	go func() {
-		err := <-errCh
-		log.Printf("FATAL: %v - Stopping all workers as per design", err)
-		wr.stopWorkers(workers)
-
-		// Close XMLPathsChan for all workers to unblock MonitorServiceEnum
-		for _, w := range workers {
-			if w.XMLPathsChan != nil {
-				close(w.XMLPathsChan)
-				log.Printf("[ListenToWorkerErrors] Closed XMLPathsChan for worker %d", w.ID)
+		for err := range errCh {
+			// We got an actual error from a worker
+			if err != nil {
+				log.Printf("FATAL: %v, stopping workers...", err)
+				wr.stopWorkers(workers)
+				// Optionally do more cleanup
+				os.Exit(1) // or return if you don't want to hard-exit
 			}
 		}
 
-		close(wr.serviceEnum)
-		close(wr.fullScan)
-		log.Println("Pipeline halted due to worker failure")
-		os.Exit(1)
+		// If we exit the for loop normally, it means errCh was closed
+		// and no non-nil errors occurred.
+		log.Println("[ListenToWorkerErrors] No worker errors received, channel closed.")
 	}()
 }
 
@@ -196,7 +211,13 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullSc
 	for i := range workers {
 		w := &workers[i]
 		go func(w *models.Worker) {
-			defer wg.Done()
+			log.Printf("[MonitorServiceEnum] Worker %d goroutine started", w.ID)
+			defer func() {
+				log.Printf("[MonitorServiceEnum] Worker %d goroutine about to wg.Done()", w.ID)
+				wg.Done()
+				log.Printf("[MonitorServiceEnum] Worker %d goroutine wg.Done() completed", w.ID)
+			}()
+
 			log.Printf("[MonitorServiceEnum] Waiting for XML path from worker %d", w.ID)
 
 			xmlPath, ok := <-w.XMLPathsChan

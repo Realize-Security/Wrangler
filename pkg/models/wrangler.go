@@ -13,7 +13,6 @@ type Project struct {
 	ExcludeScopeFile  string `validate:"required"`
 	ReportDirParent   string `validate:"required"`
 	Targets           []Target
-	Workers           []Worker
 	ProjectReportPath string
 }
 

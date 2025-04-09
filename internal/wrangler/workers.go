@@ -12,17 +12,23 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"strconv"
 	"sync"
 	"syscall"
 )
 
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-func (wr *wranglerRepository) startWorkers(project *models.Project, inChan <-chan models.Target, batchSize int) *sync.WaitGroup {
+func (wr *wranglerRepository) startWorkers(
+	project *models.Project,
+	workers []models.Worker,
+	inChan <-chan models.Target,
+	batchSize int,
+) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	workers := project.Workers
+	//workers := project.Workers
 	if len(workers) == 0 {
 		log.Println("[startWorkers] No workers defined")
+
+		// Drain any incoming targets so we don't block upstream
 		go func() {
 			for t := range inChan {
 				log.Printf("[startWorkers] Draining target %s with ports %v", t.Host, t.Ports)
@@ -37,51 +43,110 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, inChan <-cha
 	}
 
 	log.Printf("[startWorkers] Starting %d workers", len(workers))
-	wg.Add(1) // For the goroutine
+
+	// Add 1 for the “batch reading goroutine”
+	wg.Add(1)
+
 	go func() {
-		defer wg.Done()
-		defer log.Println("[startWorkers] Input channel closed")
-		var bid int
+		defer wg.Done() // so when we're done reading all batches, we decrement by 1.
+
+		var batchID int
 		for batch := range helpers.ReadNTargetsFromChannelContinuous(inChan, batchSize) {
 			if len(batch) == 0 {
 				continue
 			}
 
-			prefix := "batch_" + strconv.Itoa(bid) + "_"
-			write := make([]string, 0, len(batch))
-			for _, target := range batch {
-				log.Printf("[startWorkers] Received target %s with ports %v", target.Host, target.Ports)
-				write = append(write, target.Host)
-			}
+			prefix := fmt.Sprintf("batch_%d_", batchID)
+			batchID++
 
-			f, err := files.WriteSliceToFile(scopeDir, prefix+"in_scope.txt", write)
+			// Write the batch of hosts to a file
+			fpath, err := files.WriteSliceToFile(scopeDir, prefix+"in_scope.txt", hostsFromBatch(batch))
 			if err != nil {
 				log.Printf("[startWorkers] Failed to write targets to file: %v", err)
 				continue
 			}
-			bid++
 
+			// Now spawn 1 goroutine per worker in project.Workers:
 			for i := range workers {
-				wg.Add(1)
 				w := &workers[i]
+				wg.Add(1) // increment for this one worker
+				go func(workerPtr *models.Worker, localPath string) {
+					defer wg.Done() // matching Done in the worker goroutine
 
-				localArgs := append([]string{}, w.Args...)
-				localArgs = append(localArgs, "-T4", "-iL", f)
-				if project.ExcludeScopeFile != "" {
-					localArgs = append(localArgs, "--excludefile", project.ExcludeScopeFile)
-				}
+					localArgs := append([]string{}, workerPtr.Args...)
+					localArgs = append(localArgs, "-iL", localPath)
+					if project.ExcludeScopeFile != "" {
+						localArgs = append(localArgs, "--excludefile", project.ExcludeScopeFile)
+					}
 
-				reportName := helpers.SpacesToUnderscores(prefix + w.Description)
-				reportPath := path.Join(project.ReportDirParent, reportName)
-				localArgs = append(localArgs, "-oA", reportPath)
-				w.XMLReportPath = reportPath + ".xml"
+					reportName := helpers.SpacesToUnderscores(prefix + workerPtr.Description)
+					reportPath := path.Join(project.ReportDirParent, reportName)
+					localArgs = append(localArgs, "-oA", reportPath)
+					workerPtr.XMLReportPath = reportPath + ".xml"
 
-				go worker(w, localArgs, &wg)
-				w.UserCommand <- "run"
+					// Actually run the command
+					runWorker(workerPtr, localArgs)
+				}(w, fpath)
 			}
 		}
+		log.Println("[startWorkers] No more targets, workers completed")
 	}()
+
 	return &wg
+}
+
+// A simple wrapper for the actual worker logic
+func runWorker(w *models.Worker, args []string) {
+	log.Printf("[Worker %s] Starting with args: %v", w.Description, args)
+
+	// Execute the scan command
+	c := exec.Command(w.Command, args...)
+	output, err := c.CombinedOutput()
+
+	log.Printf("[Worker %s] Captured %d bytes of stdout", w.Description, len(output))
+
+	// Send output to WorkerResponse channel
+	if w.WorkerResponse != nil {
+		w.WorkerResponse <- string(output)
+		log.Printf("[Worker %s] Sent %d bytes to WorkerResponse", w.Description, len(output))
+	}
+
+	// Extract and send XML report path
+	var xmlPath string
+	for i, arg := range args {
+		if arg == "-oA" && i+1 < len(args) {
+			xmlPath = args[i+1] + ".xml"
+			break
+		}
+	}
+	if xmlPath != "" && w.XMLPathsChan != nil {
+		if _, statErr := os.Stat(xmlPath); os.IsNotExist(statErr) {
+			log.Printf("[Worker %s] XML file not found: %s", w.Description, xmlPath)
+			if w.ErrorChan != nil {
+				w.ErrorChan <- fmt.Errorf("XML file not generated: %s", xmlPath)
+			}
+		} else {
+			w.XMLPathsChan <- xmlPath
+			log.Printf("[Worker %s] Sent XML path: %s", w.Description, xmlPath)
+		}
+	}
+
+	// Send error (or nil) to ErrorChan
+	if w.ErrorChan != nil {
+		w.ErrorChan <- err
+		log.Printf("[Worker %s] Sent error to ErrorChan", w.Description)
+	}
+
+	log.Printf("[Worker %s] Worker finished", w.Description)
+}
+
+// Utility function to extract just the host IPs
+func hostsFromBatch(batch []models.Target) []string {
+	var list []string
+	for _, b := range batch {
+		list = append(list, b.Host)
+	}
+	return list
 }
 
 func worker(w *models.Worker, args []string, wg *sync.WaitGroup) {
