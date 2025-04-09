@@ -114,7 +114,6 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
-					// Forward the error (plus context) into errCh
 					errCh <- fmt.Errorf(
 						"worker %d encountered an OS error: %w, stderr: %s",
 						w.ID, workerErr, w.StdError,
@@ -205,11 +204,11 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullSc
 		return &wg
 	}
 
-	wg.Add(len(workers))
 	log.Printf("[MonitorServiceEnum] Starting to monitor %d workers", len(workers))
 
 	for i := range workers {
 		w := &workers[i]
+		wg.Add(1)
 		go func(w *models.Worker) {
 			log.Printf("[MonitorServiceEnum] Worker %d goroutine started", w.ID)
 			defer func() {

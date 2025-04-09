@@ -44,11 +44,10 @@ func (wr *wranglerRepository) startWorkers(
 
 	log.Printf("[startWorkers] Starting %d workers", len(workers))
 
-	// Add 1 for the “batch reading goroutine”
 	wg.Add(1)
 
 	go func() {
-		defer wg.Done() // so when we're done reading all batches, we decrement by 1.
+		defer wg.Done()
 
 		var batchID int
 		for batch := range helpers.ReadNTargetsFromChannelContinuous(inChan, batchSize) {
@@ -59,19 +58,17 @@ func (wr *wranglerRepository) startWorkers(
 			prefix := fmt.Sprintf("batch_%d_", batchID)
 			batchID++
 
-			// Write the batch of hosts to a file
 			fpath, err := files.WriteSliceToFile(scopeDir, prefix+"in_scope.txt", hostsFromBatch(batch))
 			if err != nil {
 				log.Printf("[startWorkers] Failed to write targets to file: %v", err)
 				continue
 			}
 
-			// Now spawn 1 goroutine per worker in project.Workers:
 			for i := range workers {
 				w := &workers[i]
-				wg.Add(1) // increment for this one worker
+				wg.Add(1)
 				go func(workerPtr *models.Worker, localPath string) {
-					defer wg.Done() // matching Done in the worker goroutine
+					defer wg.Done()
 
 					localArgs := append([]string{}, workerPtr.Args...)
 					localArgs = append(localArgs, "-iL", localPath)
@@ -84,7 +81,6 @@ func (wr *wranglerRepository) startWorkers(
 					localArgs = append(localArgs, "-oA", reportPath)
 					workerPtr.XMLReportPath = reportPath + ".xml"
 
-					// Actually run the command
 					runWorker(workerPtr, localArgs)
 				}(w, fpath)
 			}
@@ -99,19 +95,16 @@ func (wr *wranglerRepository) startWorkers(
 func runWorker(w *models.Worker, args []string) {
 	log.Printf("[Worker %s] Starting with args: %v", w.Description, args)
 
-	// Execute the scan command
 	c := exec.Command(w.Command, args...)
 	output, err := c.CombinedOutput()
 
 	log.Printf("[Worker %s] Captured %d bytes of stdout", w.Description, len(output))
 
-	// Send output to WorkerResponse channel
 	if w.WorkerResponse != nil {
 		w.WorkerResponse <- string(output)
 		log.Printf("[Worker %s] Sent %d bytes to WorkerResponse", w.Description, len(output))
 	}
 
-	// Extract and send XML report path
 	var xmlPath string
 	for i, arg := range args {
 		if arg == "-oA" && i+1 < len(args) {
@@ -131,7 +124,7 @@ func runWorker(w *models.Worker, args []string) {
 		}
 	}
 
-	// Send error (or nil) to ErrorChan
+	// TODO: Check this. ErrorChan is never not nil, its an instance of a chan
 	if w.ErrorChan != nil {
 		w.ErrorChan <- err
 		log.Printf("[Worker %s] Sent error to ErrorChan", w.Description)
@@ -153,18 +146,15 @@ func worker(w *models.Worker, args []string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Printf("[Worker %s] Starting with args: %v", w.Description, args)
 
-	// Execute the scan command
 	c := exec.Command(w.Command, args...)
 	output, err := c.CombinedOutput()
 	log.Printf("[Worker %s] Captured %d bytes of stdout", w.Description, len(output))
 
-	// Send output to WorkerResponse channel
 	if w.WorkerResponse != nil {
 		w.WorkerResponse <- string(output)
 		log.Printf("[Worker %s] Sent %d bytes to WorkerResponse", w.Description, len(output))
 	}
 
-	// Extract and send XML report path (if applicable)
 	var xmlPath string
 	for i, arg := range args {
 		if arg == "-oA" && i+1 < len(args) {
