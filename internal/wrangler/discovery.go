@@ -42,7 +42,6 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 
 // DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
 func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup {
-	// TODO: Refactor to do all IPs in one scan
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Add(1)
@@ -72,27 +71,24 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 				return
 			}
 
-			go func() {
-				stdout := <-outChan
-				stderr := <-stderrChan
-				err := <-errChan
+			stdout := <-outChan
+			stderr := <-stderrChan
+			err := <-errChan
 
-				log.Printf("Worker %d: Sending %d bytes to WorkerResponse", dw.ID, len(stdout))
-				dw.WorkerResponse <- stdout
-				if err != nil {
-					if stderr != "" {
-						fmt.Println(stderr)
-						dw.StdError = stderr
-					}
-					dw.ErrorChan <- err
-				} else {
-					dw.ErrorChan <- nil
+			log.Printf("Worker %d: Sending %d bytes to WorkerResponse", dw.ID, len(stdout))
+			dw.WorkerResponse <- stdout
+			if err != nil {
+				if stderr != "" {
+					fmt.Println(stderr)
+					dw.StdError = stderr
 				}
-				dw.Finished = time.Now()
-				close(dw.WorkerResponse)
-				cancel()
-			}()
-
+				dw.ErrorChan <- err
+			} else {
+				dw.ErrorChan <- nil
+			}
+			dw.Finished = time.Now()
+			close(dw.WorkerResponse)
+			cancel()
 			dw.UserCommand <- "run"
 		}(w)
 	}
