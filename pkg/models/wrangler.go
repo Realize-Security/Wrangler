@@ -15,6 +15,7 @@ type Project struct {
 	Targets           []Target
 	ProjectReportPath string
 	ProjectBase       string
+	TempDir           string
 }
 
 type Target struct {
