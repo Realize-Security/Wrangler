@@ -64,8 +64,6 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			if err != nil {
 				commands[w.Command] = true
 			}
-			// TODO: Verify sleep is required and can be removed
-			time.Sleep(3 * time.Second)
 			if w.Cmd.Process != nil && !w.Cmd.ProcessState.Exited() {
 				log.Printf("Worker %d still running, sending SIGKILL", w.ID)
 				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
