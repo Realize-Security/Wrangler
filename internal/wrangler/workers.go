@@ -82,7 +82,7 @@ func (wr *wranglerRepository) startWorkers(
 				}(w, f)
 			}
 		}
-		log.Println("[startWorkers] No more targets, workers completed")
+		log.Println("[startWorkers] Worker run complete...")
 	}()
 
 	return &wg
