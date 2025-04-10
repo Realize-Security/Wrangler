@@ -12,11 +12,11 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string) (*sync.WaitGroup, chan struct{}) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) (*sync.WaitGroup, chan struct{}) {
 	var workers []models.Worker
 
 	for i, chunk := range chunkSlice(inScope, batchSize) {
-		f, err := files.WriteSliceToFile(scopeDir, ".discover_temp_"+strconv.Itoa(i)+".txt", chunk)
+		f, err := files.WriteSliceToFile(scopeDir, project.TempDir+"_"+project.Name+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
 			return nil, nil

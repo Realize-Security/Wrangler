@@ -33,7 +33,7 @@ func (wr *wranglerRepository) startScanProcess(
 
 	if wr.cli.RunDiscovery {
 		log.Println("[*] Starting discovery")
-		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude, tempDir)
+		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
 	} else {
 		log.Println("[*] Skipping discovery")
 		close(wr.serviceEnum)
