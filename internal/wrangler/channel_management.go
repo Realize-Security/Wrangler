@@ -27,8 +27,8 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 			for resp := range w.WorkerResponse {
 				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
 				if strings.Contains(resp, "Host is up (") {
-					wr.serviceEnum <- models.Target{Host: w.Target} // Use wr.serviceEnum
-					log.Printf("[Discovery] Found live host: %s", w.Target)
+					wr.serviceEnum <- models.Target{Host: w.Target}
+					log.Printf("[*] Found live host: %s", w.Target)
 				}
 			}
 		}()
@@ -37,7 +37,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 	go func() {
 		wg.Wait()
 		close(wr.serviceEnum)
-		log.Println("[Discovery] All responses monitored, serviceEnum closed.")
+		log.Println("[*] All responses monitored, service enumeration channel closed.")
 		close(done)
 	}()
 	return done
@@ -102,7 +102,7 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 		}()
 	}
 
-	// close errCh so any downstream listener won't block forever.
+	// close error chan so any downstream listener won't block forever.
 	go func() {
 		wg.Wait()
 		close(errCh)
@@ -120,8 +120,7 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 			}
 		}
 
-		// If we exit the for loop normally, it means errCh was closed
-		// and no non-nil errors occurred.
+		// If we exit the for loop normally, it means error channel was closed and no non-nil errors occurred.
 		log.Println("[ListenToWorkerErrors] No worker errors received, channel closed.")
 	}()
 }
