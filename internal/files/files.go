@@ -36,6 +36,7 @@ func FileLinesToSlice(path string) ([]string, error) {
 	return result, nil
 }
 
+// WriteSliceToFile returns a full path to a newly created file
 func WriteSliceToFile(directory, filename string, targets []string) (string, error) {
 	err := CreateDir(directory)
 	if err != nil {
@@ -126,4 +127,12 @@ func SetFileAndDirPermsRecursive(nonRootUser, filePath string) error {
 		return err
 	}
 	return nil
+}
+
+func MakeTempDir(base, dir string) (string, error) {
+	d, err := os.MkdirTemp(base, dir)
+	if err != nil {
+		return "", err
+	}
+	return d, nil
 }
