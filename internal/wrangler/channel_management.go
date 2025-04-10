@@ -2,6 +2,7 @@ package wrangler
 
 import (
 	"Wrangler/internal/nmap"
+	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"fmt"
 	"github.com/shirou/gopsutil/v3/process"
@@ -27,8 +28,16 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 			for resp := range w.WorkerResponse {
 				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
 				if strings.Contains(resp, "Host is up (") {
-					wr.serviceEnum <- models.Target{Host: w.Target}
-					log.Printf("[*] Found live host: %s", w.Target)
+					hosts := getUpHosts(resp)
+					for _, host := range hosts {
+						if host != "" {
+							wr.serviceEnum <- models.Target{Host: host}
+							log.Printf("[*] Found live host: %s", hosts)
+						} else {
+							// If we've hit a "", the rest of the []string is empty
+							break
+						}
+					}
 				}
 			}
 		}()
@@ -41,6 +50,28 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 		close(done)
 	}()
 	return done
+}
+
+// getUpHosts extract IPv4 addresses from Nmap stdout
+func getUpHosts(output string) []string {
+	lines := strings.Split(output, "\n")
+	res := make([]string, len(lines))
+	i := 0
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "Nmap scan report for") {
+			continue
+		}
+		if strings.HasSuffix(line, "[host down]") {
+			continue
+		}
+		ip := helpers.ExtractIPv4FromString(line)
+		res[i] = ip
+		i++
+	}
+	if len(res) > 0 {
+		return res
+	}
+	return nil
 }
 
 func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh <-chan os.Signal) {
@@ -120,8 +151,7 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 			}
 		}
 
-		// If we exit the for loop normally, it means error channel was closed and no non-nil errors occurred.
-		log.Println("[ListenToWorkerErrors] No worker errors received, channel closed.")
+		log.Println("[!] No worker errors received, channel closed.")
 	}()
 }
 
@@ -174,36 +204,34 @@ func processWipe(commands map[string]bool) {
 func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullScan chan<- models.Target) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	if len(workers) == 0 {
-		log.Println("[MonitorServiceEnum] No workers to monitor")
+		log.Println("[!] No workers to monitor")
 		return &wg
 	}
 
-	log.Printf("[MonitorServiceEnum] Starting to monitor %d workers", len(workers))
+	log.Printf("[*] Starting to monitor %d workers", len(workers))
 
 	for i := range workers {
 		w := &workers[i]
 		wg.Add(1)
 		go func(w *models.Worker) {
-			log.Printf("[MonitorServiceEnum] Worker %d goroutine started", w.ID)
+			log.Printf("[*] Worker %d goroutine started", w.ID)
 			defer func() {
-				log.Printf("[MonitorServiceEnum] Worker %d goroutine about to wg.Done()", w.ID)
 				wg.Done()
-				log.Printf("[MonitorServiceEnum] Worker %d goroutine wg.Done() completed", w.ID)
+				log.Printf("[*] Worker %d goroutine wg.Done() completed", w.ID)
 			}()
 
-			log.Printf("[MonitorServiceEnum] Waiting for XML path from worker %d", w.ID)
-
+			log.Printf("[*] Waiting for XML path from worker %d", w.ID)
 			xmlPath, ok := <-w.XMLPathsChan
 			if !ok {
-				log.Printf("[MonitorServiceEnum] XMLPathsChan closed for worker %d", w.ID)
+				log.Printf("[*] XMLPathsChan closed for worker %d", w.ID)
 				return
 			}
 
-			log.Printf("[MonitorServiceEnum] Received XML path %s from worker %d", xmlPath, w.ID)
+			log.Printf("[*] Received XML path %s from worker %d", xmlPath, w.ID)
 
 			nmapRun, err := nmap.ReadNmapXML(xmlPath)
 			if err != nil {
-				log.Printf("[MonitorServiceEnum] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
+				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
 				w.ErrorChan <- err
 				return
 			}
@@ -217,18 +245,18 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullSc
 						}
 					}
 					if len(openPorts) > 0 {
-						log.Printf("[MonitorServiceEnum] Found %s -> Ports: %v", host.Addresses[0].Addr, openPorts)
+						log.Printf("[*] Found %s -> Ports: %v", host.Addresses[0].Addr, openPorts)
 						t := models.Target{
 							Host:  host.Addresses[0].Addr,
 							Ports: openPorts,
 						}
-						log.Printf("[MonitorServiceEnum] Sending target %s to fullScan", t.Host)
+						log.Printf("[*] Sending target %s to fullScan", t.Host)
 						fullScan <- t
-						log.Printf("[MonitorServiceEnum] Sent target %s to fullScan", t.Host)
+						log.Printf("[*] Sent target %s to fullScan", t.Host)
 					}
 				}
 			}
-			log.Printf("[MonitorServiceEnum] Finished processing XML for worker %d", w.ID)
+			log.Printf("[*] Finished processing XML for worker %d", w.ID)
 		}(w)
 	}
 	return &wg
