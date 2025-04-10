@@ -1,25 +1,36 @@
 package wrangler
 
 import (
+	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile string) (*sync.WaitGroup, chan struct{}) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string) (*sync.WaitGroup, chan struct{}) {
 	var workers []models.Worker
-	for i, target := range inScope {
+
+	for i, chunk := range chunkSlice(inScope, batchSize) {
+		f, err := files.WriteSliceToFile(scopeDir, ".discover_temp_"+strconv.Itoa(i)+".txt", chunk)
+		if err != nil {
+			fmt.Printf("unable to create temp scope file: %s", err)
+			return nil, nil
+		}
+
 		args := []string{
-			"-sn", "-PS22,80,443,3389", "-PA80,443", "-PU40125", "-PY80,443", "-PE", "-PP", "-PM", "-T4", "-v", target,
+			"-sn", "-PS22,80,443,3389",
+			"-PA80,443", "-PU40125", "-n",
+			"-PY80,443", "-PE", "-PP",
+			"-PM", "-T4", "-v", "-iL", f,
 		}
 		workers = append(workers, models.Worker{
-			ID:             i,
+			ID:             0,
 			Type:           "nmap",
-			Target:         target,
 			Command:        "nmap",
 			Args:           args,
 			UserCommand:    make(chan string, 1),
@@ -93,4 +104,24 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 		}(w)
 	}
 	return &wg
+}
+
+// chunkSlice splits the slice `src` into multiple slices of length `chunkSize`. The last chunk may be shorter if there aren't enough elements left.
+func chunkSlice(src []string, chunkSize int) [][]string {
+	if chunkSize <= 0 {
+		return [][]string{src}
+	}
+	if len(src) == 0 {
+		return nil
+	}
+
+	var chunks [][]string
+	for i := 0; i < len(src); i += chunkSize {
+		end := i + chunkSize
+		if end > len(src) {
+			end = len(src)
+		}
+		chunks = append(chunks, src[i:end])
+	}
+	return chunks
 }
