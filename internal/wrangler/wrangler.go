@@ -21,7 +21,6 @@ var (
 	inScopeFile = "in_scope.txt"
 	excludeFile = "out_of_scope.txt"
 	nonRootUser = ""
-	projectRoot = ""
 	batchSize   = 200
 
 	// Channels & global vars
