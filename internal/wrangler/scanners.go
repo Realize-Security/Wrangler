@@ -1,6 +1,7 @@
 package wrangler
 
 import (
+	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
@@ -18,9 +19,21 @@ func (wr *wranglerRepository) startScanProcess(
 	var discWg *sync.WaitGroup
 	var discoveryDone chan struct{}
 
+	tempDir, err := files.MakeTempDir(project.ProjectBase, ".temp_discovery_scope")
+	if err != nil {
+		fmt.Printf("unable to create temp scope file directory: %s", err)
+	}
+
+	defer func(name string) {
+		err = os.Remove(name)
+		if err != nil {
+			fmt.Printf("unable to delete temp scope file directory: %s", err)
+		}
+	}(tempDir)
+
 	if wr.cli.RunDiscovery {
 		log.Println("[*] Starting discovery")
-		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude)
+		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude, tempDir)
 	} else {
 		log.Println("[*] Skipping discovery")
 		close(wr.serviceEnum)
@@ -30,7 +43,6 @@ func (wr *wranglerRepository) startScanProcess(
 
 	if wr.cli.RunDiscovery {
 		log.Println("[*] Waiting for discovery to complete")
-		log.Println("[DEBUG] about to discWg.Wait()")
 		discWg.Wait()
 		log.Println("[DEBUG] discWg.Wait() returned")
 		<-discoveryDone
@@ -40,23 +52,19 @@ func (wr *wranglerRepository) startScanProcess(
 	parseWg := wr.ServiceEnumeration(project)
 
 	log.Println("[*] Waiting for enumeration to complete")
-	log.Println("[DEBUG] about to parseWg.Wait()")
 	parseWg.Wait()
 	log.Println("[DEBUG] parseWg.Wait() returned")
 
 	close(wr.fullScan)
-	log.Println("[*] Closed full scan channel")
 
 	log.Println("[*] Starting PrimaryScanners")
 	primaryWg := wr.PrimaryScanners(project)
 	if primaryWg != nil {
-		log.Println("[DEBUG] about to primaryWg.Wait()")
 		primaryWg.Wait()
 		log.Println("[DEBUG] primaryWg.Wait() returned")
 	}
 
-	log.Println("[*] All scanning steps complete")
-	log.Println("[*] Application shutting down gracefully")
+	log.Println("[*] All scanning steps complete. Shutting down.")
 }
 
 func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.WaitGroup {
@@ -77,10 +85,11 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.
 		ErrorChan:      make(chan error),
 		XMLPathsChan:   make(chan string),
 	}
+	// TODO: Make this more comprehensive. Ok for now for debugging and dev
 	w.Args = []string{"-sT", "-p 443"}
 	workers := []models.Worker{w}
 
-	log.Println("[ServiceEnumeration] Starting enumeration workers...")
+	log.Println("[*] Starting enumeration workers...")
 	enumWg := wr.startWorkers(project, workers, wr.serviceEnum, batchSize)
 
 	parseWg := wr.MonitorServiceEnum(workers, wr.fullScan)
@@ -90,11 +99,11 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.
 	wr.ListenToWorkerErrors(workers, errCh)
 
 	enumWg.Wait()
-	log.Println("[ServiceEnumeration] All enumeration processes ended.")
+	log.Println("[*] All enumeration processes ended.")
 	return parseWg
 }
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
-	log.Println("[PrimaryScanners] Entered function")
+	log.Println("[*] Starting primary scanners")
 
 	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
@@ -136,7 +145,7 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 
 	wg := wr.startWorkers(project, workers, wr.fullScan, batchSize)
 	if wg == nil {
-		log.Println("[!] startWorkers returned nil")
+		log.Println("[!] No workers returned for primary scanners")
 		var emptyWg sync.WaitGroup
 		return &emptyWg
 	}
