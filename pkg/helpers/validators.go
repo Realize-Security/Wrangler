@@ -1,10 +1,11 @@
-package validators
+package helpers
 
 import (
 	"encoding/binary"
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -127,4 +128,10 @@ func IPv4IsCIDR(ip string) *net.IPNet {
 		return nil
 	}
 	return ipv4Net
+}
+
+func ExtractIPv4FromString(input string) string {
+	ipRegex := regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`)
+	matches := ipRegex.FindString(input)
+	return matches
 }
