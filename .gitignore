@@ -25,6 +25,6 @@ go.work.sum
 .env
 report_dir
 ip_addresses.txt
-assessment_scope
+assessment_scope-*
 ./main
 **/.temp-*
