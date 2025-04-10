@@ -16,7 +16,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 	var workers []models.Worker
 
 	for i, chunk := range chunkSlice(inScope, batchSize) {
-		f, err := files.WriteSliceToFile(scopeDir, project.TempDir+"_"+project.Name+strconv.Itoa(i)+".txt", chunk)
+		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
 			return nil, nil

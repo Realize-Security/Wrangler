@@ -66,7 +66,7 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 		Name:             wr.cli.ProjectName,
 		ExcludeScopeFile: wr.cli.ScopeExclude,
 		ReportDirParent:  wr.cli.Output,
-		TempDir:          ".temp-",
+		TempPrefix:       ".temp",
 	}
 
 	if wr.cli.BatchSize > 0 {
@@ -82,7 +82,8 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	}
 
 	project.ProjectBase = cwd
-	scopeDir = path.Join(cwd, scopeDir)
+	scopeDir = path.Join(cwd, scopeDir+"-"+project.Name)
+	project.TempPrefix = project.TempPrefix + "-" + project.Name
 
 	reportDirectory, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
 	if err != nil {
@@ -125,7 +126,7 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 			fmt.Printf("[!] unable to list directory: %s. Error: %s", project.ProjectBase, err)
 		}
 		for _, entry := range entries {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), project.TempDir) {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), project.TempPrefix) {
 				err = os.RemoveAll(entry.Name())
 				if err != nil {
 					fmt.Printf("[!] failed to delete temp directory: %s. Error: %s", entry.Name(), err)
