@@ -152,7 +152,3 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 
 	wr.startScanProcess(project, inScope, exclude)
 }
-
-func deleteTempFiles() {
-
-}
