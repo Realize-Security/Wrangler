@@ -5,6 +5,5 @@ import (
 )
 
 func SpacesToUnderscores(description string) string {
-	description = strings.ToLower(description)
-	return strings.Replace(description, " ", "_", -1)
+	return strings.Replace(strings.ToLower(description), " ", "_", -1)
 }
