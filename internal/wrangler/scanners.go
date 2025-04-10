@@ -19,35 +19,35 @@ func (wr *wranglerRepository) startScanProcess(
 	var discoveryDone chan struct{}
 
 	if wr.cli.RunDiscovery {
-		log.Println("[startScanProcess] Starting discovery")
+		log.Println("[*] Starting discovery")
 		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude)
 	} else {
-		log.Println("[startScanProcess] Skipping discovery")
+		log.Println("[*] Skipping discovery")
 		close(wr.serviceEnum)
 		discoveryDone = make(chan struct{})
 		close(discoveryDone)
 	}
 
 	if wr.cli.RunDiscovery {
-		log.Println("[startScanProcess] Waiting for discovery to complete")
+		log.Println("[*] Waiting for discovery to complete")
 		log.Println("[DEBUG] about to discWg.Wait()")
 		discWg.Wait()
 		log.Println("[DEBUG] discWg.Wait() returned")
 		<-discoveryDone
 	}
 
-	log.Println("[startScanProcess] Starting ServiceEnumeration")
+	log.Println("[*] Starting ServiceEnumeration")
 	parseWg := wr.ServiceEnumeration(project)
 
-	log.Println("[startScanProcess] Waiting for enumeration to complete")
+	log.Println("[*] Waiting for enumeration to complete")
 	log.Println("[DEBUG] about to parseWg.Wait()")
 	parseWg.Wait()
 	log.Println("[DEBUG] parseWg.Wait() returned")
 
 	close(wr.fullScan)
-	log.Println("[startScanProcess] Closed fullScan channel")
+	log.Println("[*] Closed full scan channel")
 
-	log.Println("[startScanProcess] Starting PrimaryScanners")
+	log.Println("[*] Starting PrimaryScanners")
 	primaryWg := wr.PrimaryScanners(project)
 	if primaryWg != nil {
 		log.Println("[DEBUG] about to primaryWg.Wait()")
@@ -55,8 +55,8 @@ func (wr *wranglerRepository) startScanProcess(
 		log.Println("[DEBUG] primaryWg.Wait() returned")
 	}
 
-	log.Println("[startScanProcess] All scanning steps complete")
-	log.Println("[startScanProcess] Application shutting down gracefully")
+	log.Println("[*] All scanning steps complete")
+	log.Println("[*] Application shutting down gracefully")
 }
 
 func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.WaitGroup {
@@ -98,22 +98,22 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 
 	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
-		log.Printf("[PrimaryScanners] Unable to load scans: %s", err)
+		log.Printf("[!] Unable to load scans: %s", err)
 		return nil
 	}
 
 	if len(args) == 0 {
-		log.Println("[PrimaryScanners] No scan patterns in YAML, skipping")
+		log.Println("[!] No scan patterns in YAML, skipping")
 		var wg sync.WaitGroup
 		go func() {
 			for t := range wr.fullScan {
-				log.Printf("[PrimaryScanners] Draining target %s with ports %v", t.Host, t.Ports)
+				log.Printf("[*] Draining target %s with ports %v", t.Host, t.Ports)
 			}
 		}()
 		return &wg
 	}
 
-	log.Printf("[PrimaryScanners] Loaded %d primary scans from YAML", len(args))
+	log.Printf("[*] Loaded %d primary scans from YAML", len(args))
 
 	var workers []models.Worker
 	for i, pattern := range args {
@@ -132,11 +132,11 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 		workers = append(workers, w)
 	}
 
-	log.Printf("[PrimaryScanners] Initialized %d workers", len(workers))
+	log.Printf("[*] Initialized %d workers", len(workers))
 
 	wg := wr.startWorkers(project, workers, wr.fullScan, batchSize)
 	if wg == nil {
-		log.Println("[PrimaryScanners] startWorkers returned nil")
+		log.Println("[!] startWorkers returned nil")
 		var emptyWg sync.WaitGroup
 		return &emptyWg
 	}
@@ -145,6 +145,6 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 
-	log.Println("[PrimaryScanners] Primary scanners running")
+	log.Println("[*] Primary scanners running")
 	return wg
 }
