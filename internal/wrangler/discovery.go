@@ -29,13 +29,10 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	// Start monitoring responses and get done channel
 	discoveryDone := wr.DiscoveryResponseMonitor(w, wr.serviceEnum)
 
-	// Start discovery workers
 	wg := wr.DiscoveryScan(w, excludeFile)
 
-	// Setup error and signal handlers
 	wr.DrainWorkerErrors(w, errCh)
 	wr.ListenToWorkerErrors(w, errCh)
 	wr.SetupSignalHandler(w, sigCh)
@@ -45,6 +42,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 
 // DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
 func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup {
+	// TODO: Refactor to do all IPs in one scan
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Add(1)

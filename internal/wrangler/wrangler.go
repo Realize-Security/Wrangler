@@ -26,13 +26,7 @@ var (
 	// Channels & global vars
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
-	//primaryWorkers []models.Worker
 )
-
-//var (
-//	serviceEnum chan models.Target
-//	fullScan    chan models.Target
-//)
 
 // WranglerRepository defines the interface for creating/managing projects.
 type WranglerRepository interface {
@@ -102,8 +96,6 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	return project
 }
 
-// ProjectInit initializes a Project. This example calls setupInternal() which can
-// optionally run discovery, set up workers, etc.
 func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 	wr.setupInternal(project)
 }
@@ -111,9 +103,7 @@ func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 // setupInternal does the initial file setup, runs optional discovery, then
 // starts the “primary” workers that read from `serviceEnum`.
 func (wr *wranglerRepository) setupInternal(project *models.Project) {
-	// Create the report directory
-
-	// Flatten & write exclude file
+	// Flatten & write scope exclusion
 	var excludeHosts []string
 	var exclude string
 	var err error
@@ -144,8 +134,10 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		}
 	}
 
-	//fullScan = make(chan models.Target, len(inScope))
-	//serviceEnum = make(chan models.Target, len(inScope))
+	if len(inScope) > batchSize {
+		wr.fullScan = make(chan models.Target, len(inScope))
+		wr.serviceEnum = make(chan models.Target, len(inScope))
+	}
 
 	wr.startScanProcess(project, inScope, exclude)
 }

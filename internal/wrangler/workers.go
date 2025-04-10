@@ -24,14 +24,11 @@ func (wr *wranglerRepository) startWorkers(
 	batchSize int,
 ) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	//workers := project.Workers
 	if len(workers) == 0 {
-		log.Println("[startWorkers] No workers defined")
-
 		// Drain any incoming targets so we don't block upstream
 		go func() {
 			for t := range inChan {
-				log.Printf("[startWorkers] Draining target %s with ports %v", t.Host, t.Ports)
+				log.Printf("[startWorkers]  No workers defined. Draining target %s with ports %v", t.Host, t.Ports)
 			}
 		}()
 		return &wg
@@ -58,7 +55,7 @@ func (wr *wranglerRepository) startWorkers(
 			prefix := fmt.Sprintf("batch_%d_", batchID)
 			batchID++
 
-			fpath, err := files.WriteSliceToFile(scopeDir, prefix+"in_scope.txt", hostsFromBatch(batch))
+			f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, hostsFromBatch(batch))
 			if err != nil {
 				log.Printf("[startWorkers] Failed to write targets to file: %v", err)
 				continue
@@ -82,7 +79,7 @@ func (wr *wranglerRepository) startWorkers(
 					workerPtr.XMLReportPath = reportPath + ".xml"
 
 					runWorker(workerPtr, localArgs)
-				}(w, fpath)
+				}(w, f)
 			}
 		}
 		log.Println("[startWorkers] No more targets, workers completed")
@@ -140,47 +137,6 @@ func hostsFromBatch(batch []models.Target) []string {
 		list = append(list, b.Host)
 	}
 	return list
-}
-
-func worker(w *models.Worker, args []string, wg *sync.WaitGroup) {
-	defer wg.Done()
-	log.Printf("[Worker %s] Starting with args: %v", w.Description, args)
-
-	c := exec.Command(w.Command, args...)
-	output, err := c.CombinedOutput()
-	log.Printf("[Worker %s] Captured %d bytes of stdout", w.Description, len(output))
-
-	if w.WorkerResponse != nil {
-		w.WorkerResponse <- string(output)
-		log.Printf("[Worker %s] Sent %d bytes to WorkerResponse", w.Description, len(output))
-	}
-
-	var xmlPath string
-	for i, arg := range args {
-		if arg == "-oA" && i+1 < len(args) {
-			xmlPath = args[i+1] + ".xml"
-			break
-		}
-	}
-	if xmlPath != "" && w.XMLPathsChan != nil {
-		if _, err := os.Stat(xmlPath); os.IsNotExist(err) {
-			log.Printf("[Worker %s] XML file not found: %s", w.Description, xmlPath)
-			if w.ErrorChan != nil {
-				w.ErrorChan <- fmt.Errorf("XML file not generated: %s", xmlPath)
-			}
-		} else {
-			w.XMLPathsChan <- xmlPath
-			log.Printf("[Worker %s] Sent XML path: %s", w.Description, xmlPath)
-		}
-	}
-
-	// Send error (or nil) to ErrorChan
-	if w.ErrorChan != nil {
-		w.ErrorChan <- err
-		log.Printf("[Worker %s] Sent error to ErrorChan", w.Description)
-	}
-
-	log.Printf("[Worker %s] Worker finished", w.Description)
 }
 
 // runCommandCtx executes cmdName with args in its own process group

@@ -36,29 +36,11 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, 
 
 	go func() {
 		wg.Wait()
-		close(wr.serviceEnum) // Close wr.serviceEnum
+		close(wr.serviceEnum)
 		log.Println("[Discovery] All responses monitored, serviceEnum closed.")
 		close(done)
 	}()
 	return done
-}
-
-// CleanupPermissions adjusts file/directory ownership/permissions recursively.
-func (wr *wranglerRepository) CleanupPermissions(reports, scopes string) error {
-	fmt.Println("[*] Cleaning up.")
-	paths := []string{reports, scopes}
-
-	for _, p := range paths {
-		if p == "" {
-			continue
-		}
-		//err := files.SetFileAndDirPermsRecursive(nonRootUser, p)
-		//if err != nil {
-		//	log.Printf("failed to set permissions for %s: %s", p, err.Error())
-		//	return err
-		//}
-	}
-	return nil
 }
 
 func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh <-chan os.Signal) {
@@ -74,7 +56,7 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 	commands := make(map[string]bool)
 	for _, w := range workers {
 		if w.CancelFunc != nil {
-			w.CancelFunc() // Cancel context, but Nmap should already have output
+			w.CancelFunc()
 		}
 		if w.Cmd != nil && w.Cmd.Process != nil {
 			log.Printf("Sending SIGTERM to worker %d (PID %d)", w.ID, w.Cmd.Process.Pid)
@@ -82,7 +64,8 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			if err != nil {
 				commands[w.Command] = true
 			}
-			time.Sleep(3 * time.Second) // Increased wait for output flush
+			// TODO: Verify sleep is required and can be removed
+			time.Sleep(3 * time.Second)
 			if w.Cmd.Process != nil && !w.Cmd.ProcessState.Exited() {
 				log.Printf("Worker %d still running, sending SIGKILL", w.ID)
 				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
@@ -101,12 +84,10 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
 // If a non-nil error arrives, we send it to `errCh`.
 func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh chan<- error) {
-	// Create a WaitGroup to wait for all readers to finish.
 	var wg sync.WaitGroup
 
-	// Start one goroutine per worker to drain w.ErrorChan
 	for _, w := range workers {
-		w := w // capture range variable
+		w := w
 		wg.Add(1)
 
 		go func() {
@@ -123,7 +104,6 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 		}()
 	}
 
-	// Once all worker error channels have been read (wg.Wait),
 	// close errCh so any downstream listener won't block forever.
 	go func() {
 		wg.Wait()
@@ -135,12 +115,10 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errCh <-chan error) {
 	go func() {
 		for err := range errCh {
-			// We got an actual error from a worker
 			if err != nil {
 				log.Printf("FATAL: %v, stopping workers...", err)
 				wr.stopWorkers(workers)
-				// Optionally do more cleanup
-				os.Exit(1) // or return if you don't want to hard-exit
+				os.Exit(1)
 			}
 		}
 
@@ -190,7 +168,6 @@ func processWipe(commands map[string]bool) {
 			fmt.Println(err)
 		}
 	}
-	// Log and return instead of exiting
 	log.Println("Process wipe completed, continuing execution")
 }
 

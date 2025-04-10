@@ -4,6 +4,7 @@ import "Wrangler/pkg/models"
 
 // ReadNTargetsFromChannel reads n targets in from a channel for processing
 func ReadNTargetsFromChannel[T any](ch <-chan T, n int) []T {
+	// TODO: Test if this can be used instead of continuous
 	targets := make([]T, 0, n)
 	for i := 0; i < n; i++ {
 		select {

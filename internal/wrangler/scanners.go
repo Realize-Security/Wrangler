@@ -91,7 +91,6 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.
 
 	enumWg.Wait()
 	log.Println("[ServiceEnumeration] All enumeration processes ended.")
-	log.Println("[ServiceEnumeration] Returning parseWg")
 	return parseWg
 }
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {

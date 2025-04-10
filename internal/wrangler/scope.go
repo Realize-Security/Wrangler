@@ -2,7 +2,6 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
-	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/validators"
 	"fmt"
 	"os"
@@ -67,7 +66,7 @@ func (wr *wranglerRepository) FlattenScopes(paths string) ([]string, error) {
 
 func expandCIDR(cidr string) []string {
 	finalIps := make([]string, 0)
-	res := helpers.ParseIPV4CIDR(cidr)
+	res := validators.ParseIPV4CIDR(cidr)
 	if res != nil {
 		finalIps = append(finalIps, res...)
 	} else {
