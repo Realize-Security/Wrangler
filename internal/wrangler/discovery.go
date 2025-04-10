@@ -94,7 +94,8 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			}()
 
 			dw.UserCommand <- "run"
-			time.Sleep(5 * time.Second) // Ensure Nmap runs
+			// TODO: Check this timeout is necessary
+			time.Sleep(5 * time.Second)
 		}(w)
 	}
 	return &wg
