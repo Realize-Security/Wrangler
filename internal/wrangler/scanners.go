@@ -19,7 +19,7 @@ func (wr *wranglerRepository) startScanProcess(
 	var discWg *sync.WaitGroup
 	var discoveryDone chan struct{}
 
-	tempDir, err := files.MakeTempDir(project.ProjectBase, ".temp_discovery_scope")
+	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempDir)
 	if err != nil {
 		fmt.Printf("unable to create temp scope file directory: %s", err)
 	}
