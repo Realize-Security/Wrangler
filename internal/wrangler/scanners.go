@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"sync"
 )
 
@@ -68,13 +67,6 @@ func (wr *wranglerRepository) startScanProcess(
 }
 
 func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.WaitGroup {
-	enumDir := path.Join(project.ReportDirParent, project.Name, "enumeration")
-	err := os.MkdirAll(enumDir, 0700)
-	if err != nil {
-		fmt.Printf("failed to create enum dir: %s\n", err)
-		return nil
-	}
-
 	w := models.Worker{
 		ID:             1,
 		Type:           "nmap",
