@@ -28,18 +28,18 @@ func (wr *wranglerRepository) startWorkers(
 		// Drain any incoming targets so we don't block upstream
 		go func() {
 			for t := range inChan {
-				log.Printf("[startWorkers]  No workers defined. Draining target %s with ports %v", t.Host, t.Ports)
+				log.Printf("[!]  No workers defined. Draining target %s with ports %v", t.Host, t.Ports)
 			}
 		}()
 		return &wg
 	}
 
 	if inChan == nil {
-		log.Println("[startWorkers] Input channel is nil")
+		log.Println("[!] Input channel is nil")
 		return &wg
 	}
 
-	log.Printf("[startWorkers] Starting %d workers", len(workers))
+	log.Printf("[*] Starting %d workers", len(workers))
 
 	wg.Add(1)
 
@@ -57,7 +57,7 @@ func (wr *wranglerRepository) startWorkers(
 
 			f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, hostsFromBatch(batch))
 			if err != nil {
-				log.Printf("[startWorkers] Failed to write targets to file: %v", err)
+				log.Printf("[!] Failed to write targets to file: %v", err)
 				continue
 			}
 
@@ -82,7 +82,7 @@ func (wr *wranglerRepository) startWorkers(
 				}(w, f)
 			}
 		}
-		log.Println("[startWorkers] Worker run complete...")
+		log.Println("[*] Worker run complete...")
 	}()
 
 	return &wg
@@ -90,16 +90,14 @@ func (wr *wranglerRepository) startWorkers(
 
 // A simple wrapper for the actual worker logic
 func runWorker(w *models.Worker, args []string) {
-	log.Printf("[Worker %s] Starting with args: %v", w.Description, args)
+	log.Printf("[worker-%s] Starting with args: %v", w.Description, args)
 
 	c := exec.Command(w.Command, args...)
 	output, err := c.CombinedOutput()
 
-	log.Printf("[Worker %s] Captured %d bytes of stdout", w.Description, len(output))
-
 	if w.WorkerResponse != nil {
 		w.WorkerResponse <- string(output)
-		log.Printf("[Worker %s] Sent %d bytes to WorkerResponse", w.Description, len(output))
+		log.Printf("[worker-%s] Sent %d bytes to WorkerResponse", w.Description, len(output))
 	}
 
 	var xmlPath string
@@ -111,23 +109,23 @@ func runWorker(w *models.Worker, args []string) {
 	}
 	if xmlPath != "" && w.XMLPathsChan != nil {
 		if _, statErr := os.Stat(xmlPath); os.IsNotExist(statErr) {
-			log.Printf("[Worker %s] XML file not found: %s", w.Description, xmlPath)
+			log.Printf("[worker-%s] XML file not found: %s", w.Description, xmlPath)
 			if w.ErrorChan != nil {
 				w.ErrorChan <- fmt.Errorf("XML file not generated: %s", xmlPath)
 			}
 		} else {
 			w.XMLPathsChan <- xmlPath
-			log.Printf("[Worker %s] Sent XML path: %s", w.Description, xmlPath)
+			log.Printf("[worker-%s] Sent XML path: %s", w.Description, xmlPath)
 		}
 	}
 
 	// TODO: Check this. ErrorChan is never not nil, its an instance of a chan
 	if w.ErrorChan != nil {
 		w.ErrorChan <- err
-		log.Printf("[Worker %s] Sent error to ErrorChan", w.Description)
+		log.Printf("[worker-%s] Sent error to ErrorChan", w.Description)
 	}
 
-	log.Printf("[Worker %s] Worker finished", w.Description)
+	log.Printf("[worker-%s] Worker finished", w.Description)
 }
 
 // Utility function to extract just the host IPs
@@ -175,13 +173,13 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		// Stream stdout
 		go func() {
 			io.Copy(&stdoutBuf, stdoutPipe)
-			log.Printf("Worker %d: Captured %d bytes of stdout", worker.ID, stdoutBuf.Len())
+			log.Printf("worker-%d: Captured %d bytes of stdout", worker.ID, stdoutBuf.Len())
 			close(stdoutDone)
 		}()
 
 		go func() {
 			io.Copy(&stderrBuf, stderrPipe)
-			log.Printf("Worker %d: Captured %d bytes of stderr", worker.ID, stderrBuf.Len())
+			log.Printf("worker-%d: Captured %d bytes of stderr", worker.ID, stderrBuf.Len())
 			close(stderrDone)
 		}()
 
@@ -192,7 +190,7 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				if status.Signaled() {
-					log.Printf("Worker %d: %s terminated by signal %d", worker.ID, cmdName, status.Signal())
+					log.Printf("worker-%d: %s terminated by signal %d", worker.ID, cmdName, status.Signal())
 				}
 			}
 		}
