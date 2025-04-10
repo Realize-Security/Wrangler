@@ -14,6 +14,7 @@ type Project struct {
 	ReportDirParent   string `validate:"required"`
 	Targets           []Target
 	ProjectReportPath string
+	ProjectBase       string
 }
 
 type Target struct {
