@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -35,7 +36,7 @@ type WranglerRepository interface {
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup
 	startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup
-	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string) (*sync.WaitGroup, chan struct{})
+	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project) (*sync.WaitGroup, chan struct{})
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
@@ -66,6 +67,7 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 		Name:             wr.cli.ProjectName,
 		ExcludeScopeFile: wr.cli.ScopeExclude,
 		ReportDirParent:  wr.cli.Output,
+		TempDir:          ".temp-",
 	}
 
 	if wr.cli.BatchSize > 0 {
@@ -85,7 +87,7 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 
 	reportDirectory, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
 	if err != nil {
-		fmt.Printf("Failed to create report directory: %v\n", err)
+		fmt.Printf("[!] Failed to create report directory: %v\n", err)
 		return nil
 	}
 	project.ReportDirParent = reportDirectory
@@ -117,13 +119,21 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		exclude, err = files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
 	}
 
-	// Always run CleanupPermissions() when the program exits
-	//defer func(reports, scopes string) {
-	//	err = wr.CleanupPermissions(reports, scopes)
-	//	if err != nil {
-	//		log.Printf("Error during CleanupPermissions(): %v", err)
-	//	}
-	//}(reportPath, scopeDir)
+	// Always run when the program exits
+	defer func() {
+		entries, err := os.ReadDir(project.ProjectBase)
+		if err != nil {
+			fmt.Printf("[!] unable to list directory: %s. Error: %s", project.ProjectBase, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), project.TempDir) {
+				err = os.RemoveAll(entry.Name())
+				if err != nil {
+					fmt.Printf("[!] failed to delete temp directory: %s. Error: %s", entry.Name(), err)
+				}
+			}
+		}
+	}()
 
 	// Flatten user-supplied scope
 	var inScope []string
@@ -141,4 +151,8 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	}
 
 	wr.startScanProcess(project, inScope, exclude)
+}
+
+func deleteTempFiles() {
+
 }
