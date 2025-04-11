@@ -1,8 +1,13 @@
 scan-collection:
   - scan-item:
       tool: "nmap"
-      args: [ "-sS", "-p", "3389" ]
-      description: "Debugging_scan_3389"
+      args: [ "-sS" ]
+      description: "Debugging_scan_test_random_open_port"
+
+  - scan-item:
+      tool: "nmap"
+      args: [ "-sT", "-p", "3389" ]
+      description: "Debugging_scan_test_hardcoded_port"
 
 #  - scan-item:
 #      description: "TCP all ports default scripts and versions"
