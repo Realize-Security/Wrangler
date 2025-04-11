@@ -40,7 +40,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	discoveryDone := wr.DiscoveryResponseMonitor(workers, wr.serviceEnum)
+	discoveryDone := wr.DiscoveryResponseMonitor(workers)
 
 	wg := wr.DiscoveryScan(workers, excludeFile)
 
