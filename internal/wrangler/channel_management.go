@@ -16,7 +16,7 @@ import (
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker, serviceEnum chan<- models.Target) chan struct{} {
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) chan struct{} {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
 	done := make(chan struct{})
@@ -201,7 +201,10 @@ func processWipe(commands map[string]bool) {
 // MonitorServiceEnum parses each Nmap XML from
 // the service-enumeration stage & pushes open hosts/ports
 // onto `fullScan` channel immediately.
-func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker, fullScan chan<- models.Target) *sync.WaitGroup {
+func (wr *wranglerRepository) MonitorServiceEnum(
+	workers []models.Worker,
+	fullScan chan<- models.Target,
+) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	if len(workers) == 0 {
 		log.Println("[!] No workers to monitor")
