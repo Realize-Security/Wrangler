@@ -78,7 +78,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.
 		XMLPathsChan:   make(chan string),
 	}
 	// TODO: Make this more comprehensive. Ok for now for debugging and dev
-	w.Args = []string{"-sT", "-p 443"}
+	w.Args = []string{"-sT", "-p", "443"}
 	workers := []models.Worker{w}
 
 	log.Println("[*] Starting enumeration workers...")
