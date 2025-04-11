@@ -20,8 +20,6 @@ type Project struct {
 
 type Target struct {
 	Host  string
-	OS    string
-	FQDN  string
 	Ports []string
 }
 
