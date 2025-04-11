@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -52,40 +53,84 @@ func (wr *wranglerRepository) startWorkers(
 				continue
 			}
 
-			prefix := fmt.Sprintf("batch_%d_", batchID)
-			batchID++
+			ports := getUniquePortsForTargets(batch)
+			var portStr string
+			if ports == nil || len(ports) == 0 {
+				fmt.Println("[!] batch ports is nil or empty. setting all ports")
+				portStr = "0-65535"
 
+			} else {
+				portStr = strings.Join(ports, ",")
+			}
+
+			prefix := fmt.Sprintf("batch_%d_", batchID)
 			f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, hostsFromBatch(batch))
 			if err != nil {
 				log.Printf("[!] Failed to write targets to file: %v", err)
 				continue
 			}
+			batchID++
 
 			for i := range workers {
+				custPorts := portStr
 				w := &workers[i]
 				wg.Add(1)
-				go func(workerPtr *models.Worker, localPath string) {
+				go func(w *models.Worker, localPath string) {
 					defer wg.Done()
 
-					localArgs := append([]string{}, workerPtr.Args...)
-					localArgs = append(localArgs, "-iL", localPath)
+					args := append([]string{}, w.Args...)
+					args = append(args, "-iL", localPath)
 					if project.ExcludeScopeFile != "" {
-						localArgs = append(localArgs, "--excludefile", project.ExcludeScopeFile)
+						args = append(args, "--excludefile", project.ExcludeScopeFile)
 					}
 
-					reportName := helpers.SpacesToUnderscores(prefix + workerPtr.Description)
-					reportPath := path.Join(project.ReportDirParent, reportName)
-					localArgs = append(localArgs, "-oA", reportPath)
-					workerPtr.XMLReportPath = reportPath + ".xml"
+					if !portsAreHardcoded(w) {
+						args = append(args, []string{"-p ", custPorts}...)
+					}
 
-					runWorker(workerPtr, localArgs)
+					reportName := helpers.SpacesToUnderscores(prefix + w.Description)
+					reportPath := path.Join(project.ReportDirParent, reportName)
+					args = append(args, "-oA", reportPath)
+					w.XMLReportPath = reportPath + ".xml"
+
+					runWorker(w, args)
 				}(w, f)
 			}
 		}
 		log.Println("[*] Worker run complete...")
 	}()
-
 	return &wg
+}
+
+func portsAreHardcoded(worker *models.Worker) bool {
+	for _, arg := range worker.Args {
+		if arg == "-p" || arg == "-p-" {
+			return true
+		}
+	}
+	return false
+}
+
+func getUniquePortsForTargets(batch []models.Target) []string {
+	// Create a map[string]bool to track unique ports
+	uniquePorts := make(map[string]bool)
+	for _, host := range batch {
+		p := host.Ports
+		for _, port := range p {
+			if ok := uniquePorts[port]; !ok {
+				uniquePorts[port] = true
+			}
+		}
+	}
+
+	// Convert map keys to []string
+	ports := make([]string, len(uniquePorts))
+	var index int
+	for key := range uniquePorts {
+		ports[index] = key
+		index++
+	}
+	return ports
 }
 
 // A simple wrapper for the actual worker logic
