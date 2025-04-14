@@ -28,3 +28,4 @@ ip_addresses.txt
 assessment_scope-*
 ./main
 **/.temp-*
+./.temp-*
