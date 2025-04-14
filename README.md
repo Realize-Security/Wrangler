@@ -14,3 +14,10 @@ Whilst it may be possible to create a separate Nmap process for each host, this 
 5. All data is dumped out to a user specified reports directory using Nmap's `-oA` flag.
 
 Currently only service discovery on TCP is supported. This will have to be extended to support UDP and to categorise ports by UDP, TCP, both or other.
+
+
+## TODO:
+
+1. Implement UDP and SCTP support.
+2. When application exits the report and scope directories are owned by root. Needs to be the user specified by the user.
+3. Rate limiting on number of concurrent batches.
