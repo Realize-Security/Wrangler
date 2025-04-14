@@ -12,3 +12,5 @@ Whilst it may be possible to create a separate Nmap process for each host, this 
 3. This data is then fed into a series of full scans which are templated in and loaded from a custom YAML file. 
 4. Scans will target all ports have been confirmed as OPEN by Nmap. This greatly reduces redundant scanning of filtered host ports.
 5. All data is dumped out to a user specified reports directory using Nmap's `-oA` flag.
+
+Currently only service discovery on TCP is supported. This will have to be extended to support UDP and to categorise ports by UDP, TCP, both or other.
