@@ -13,13 +13,13 @@ scan-collection:
       description: "TCP all ports default scripts and versions"
       service: "*"
       tool: "nmap"
-      args: ["-sTV", "-p-"]
+      args: ["-sTV"]
 
   - scan-item:
       description: "TCP all ports SSL ciphers"
       service: "*"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "ssl-enum-ciphers" ]
+      args: [ "-sT", "--script", "ssl-enum-ciphers" ]
 
   - scan-item:
       description: "TCP UDP common admin interfaces"
@@ -37,25 +37,25 @@ scan-collection:
       description: "TCP all ports for SSH algos"
       service: "ssh"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "ssh2-enum-algos" ]
+      args: [ "-sT", "--script", "ssh2-enum-algos" ]
 
   - scan-item:
       description: "TCP FTP scripts on all ports"
       service: "ftp"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "ftp-*" ]
+      args: [ "-sT", "--script", "ftp-*" ]
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
       service: "rdp"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "rdp-*" ]
+      args: [ "-sT", "--script", "rdp-*" ]
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
       service: "smb"
       tool: "nmap"
-      args: [ "-sT", "-p-", "--script", "smb-*" ]
+      args: [ "-sT", "--script", "smb-*" ]
 
   - scan-item:
       description: "UDP NTP scripts on all ports"
