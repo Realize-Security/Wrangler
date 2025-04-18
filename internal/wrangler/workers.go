@@ -49,19 +49,9 @@ func (wr *wranglerRepository) startWorkers(
 		defer wg.Done()
 
 		var batchID int
-		for batch := range helpers.ReadNTargetsFromChannelContinuous(inChan, batchSize) {
+		for batch := range helpers.ReadTargetsFromChannel(inChan, batchSize) {
 			if len(batch) == 0 {
 				continue
-			}
-
-			ports := getUniquePortsForTargets(batch)
-			var portStr string
-			if ports == nil || len(ports) == 0 {
-				fmt.Println("[!] batch ports is nil or empty. setting all ports")
-				portStr = "0-65535"
-
-			} else {
-				portStr = strings.Join(ports, ",")
 			}
 
 			prefix := fmt.Sprintf("batch_%d_", batchID)
@@ -73,8 +63,8 @@ func (wr *wranglerRepository) startWorkers(
 			batchID++
 
 			for i := range workers {
-				custPorts := portStr
 				w := &workers[i]
+				definePorts(w, batch)
 				wg.Add(1)
 				go func(w *models.Worker, localPath string) {
 					defer wg.Done()
@@ -82,11 +72,7 @@ func (wr *wranglerRepository) startWorkers(
 					args := append([]string{}, w.Args...)
 					args = append(args, "-iL", localPath)
 					if project.ExcludeScopeFile != "" {
-						args = append(args, "--excludefile", project.ExcludeScopeFile)
-					}
-
-					if !portsAreHardcoded(w) {
-						args = append(args, []string{"-p", custPorts}...)
+						args = append(args, "--excludefile", project.ExcludeScopeFile, "--unique")
 					}
 
 					reportName := helpers.SpacesToUnderscores(prefix + w.Description)
@@ -103,21 +89,52 @@ func (wr *wranglerRepository) startWorkers(
 	return &wg
 }
 
+func definePorts(w *models.Worker, batch []models.Target) {
+	if portsAreHardcoded(w) {
+		return
+	}
+
+	tcpPorts := getUniquePortsForTargets(batch, "tcp")
+	var tcp []string
+	if tcpPorts == nil || len(tcpPorts) == 0 {
+		fmt.Println("[!] batch tcpPorts is nil or empty. setting all TCP ports")
+		tcp = []string{"-p-"}
+	} else {
+		tcp = []string{strings.Join(tcpPorts, ",")}
+	}
+
+	udpPorts := getUniquePortsForTargets(batch, "tcp")
+	var udp []string
+	if udpPorts == nil || len(udpPorts) == 0 {
+		fmt.Println("[!] batch tcpPorts is nil or empty. setting top 1000 UDP ports")
+		udp = []string{"--top-ports", "1000"}
+	} else {
+		tcp = []string{strings.Join(udpPorts, ",")}
+	}
+
+	switch w.Protocol {
+	case "tcp":
+		w.Args = append(w.Args, tcp...)
+	case "udp":
+		w.Args = append(w.Args, udp...)
+	}
+}
+
 func portsAreHardcoded(worker *models.Worker) bool {
 	for _, arg := range worker.Args {
-		if arg == "-p" || arg == "-p-" {
+		if arg == "-p" || arg == "-p-" || arg == "--top-ports" {
 			return true
 		}
 	}
 	return false
 }
 
-func getUniquePortsForTargets(batch []models.Target) []string {
+func getUniquePortsForTargets(batch []models.Target, protocol string) []string {
 	uniquePorts := make(map[string]bool)
 	for _, host := range batch {
 		for _, port := range host.Ports {
-			if isValidPort(port) {
-				uniquePorts[port] = true
+			if isValidPort(port.PortID) && port.Protocol == protocol {
+				uniquePorts[port.PortID] = true
 			} else {
 				log.Printf("[!] Invalid port: %s", port)
 			}

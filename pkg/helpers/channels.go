@@ -18,8 +18,8 @@ func ReadNTargetsFromChannel[T any](ch <-chan T, n int) []T {
 	return targets
 }
 
-// ReadNTargetsFromChannelContinuous reads from ch until it closes, sending batches of size or less
-func ReadNTargetsFromChannelContinuous(ch <-chan models.Target, size int) <-chan []models.Target {
+// ReadTargetsFromChannel reads from ch until it closes, sending batches of size or less
+func ReadTargetsFromChannel(ch <-chan models.Target, size int) <-chan []models.Target {
 	out := make(chan []models.Target)
 	go func() {
 		defer close(out)

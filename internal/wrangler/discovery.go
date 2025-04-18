@@ -12,14 +12,14 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) (*sync.WaitGroup, chan struct{}) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) {
 	var workers []models.Worker
 
 	for i, chunk := range chunkSlice(inScope, batchSize) {
 		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
-			return nil, nil
+			return
 		}
 
 		args := []string{
@@ -40,19 +40,16 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	discoveryDone := wr.DiscoveryResponseMonitor(workers)
-
-	wg := wr.DiscoveryScan(workers, excludeFile)
+	wr.DiscoveryResponseMonitor(workers)
+	wr.DiscoveryScan(workers, excludeFile)
 
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
-
-	return wg, discoveryDone
 }
 
 // DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
-func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup {
+func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) {
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Add(1)
@@ -103,7 +100,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			dw.UserCommand <- "run"
 		}(w)
 	}
-	return &wg
 }
 
 // chunkSlice splits the slice `src` into multiple slices of length `chunkSize`. The last chunk may be shorter if there aren't enough elements left.

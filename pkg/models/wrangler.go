@@ -20,7 +20,7 @@ type Project struct {
 
 type Target struct {
 	Host  string
-	Ports []string
+	Ports []NmapPort
 }
 
 // Worker describes a single worker’s configuration and runtime state.
@@ -29,6 +29,7 @@ type Worker struct {
 	Type          string
 	Command       string
 	Args          []string
+	Protocol      string
 	Target        string
 	Description   string
 	XMLReportPath string

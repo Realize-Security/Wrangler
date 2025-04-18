@@ -15,7 +15,6 @@ func (wr *wranglerRepository) startScanProcess(
 	inScope []string,
 	exclude string,
 ) {
-	var discWg *sync.WaitGroup
 	var discoveryDone chan struct{}
 
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
@@ -32,7 +31,7 @@ func (wr *wranglerRepository) startScanProcess(
 
 	if wr.cli.RunDiscovery {
 		log.Println("[*] Starting discovery")
-		discWg, discoveryDone = wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
+		wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
 	} else {
 		log.Println("[*] Skipping discovery")
 		close(wr.serviceEnum)
@@ -40,19 +39,10 @@ func (wr *wranglerRepository) startScanProcess(
 		close(discoveryDone)
 	}
 
-	if wr.cli.RunDiscovery {
-		log.Println("[*] Waiting for discovery to complete")
-		discWg.Wait()
-		log.Println("[DEBUG] discWg.Wait() returned")
-		<-discoveryDone
-	}
-
 	log.Println("[*] Starting ServiceEnumeration")
-	parseWg := wr.ServiceEnumeration(project)
-
-	log.Println("[*] Waiting for enumeration to complete")
+	parseWg, enumWg := wr.ServiceEnumeration(project)
+	enumWg.Wait()
 	parseWg.Wait()
-	log.Println("[DEBUG] parseWg.Wait() returned")
 
 	close(wr.fullScan)
 
@@ -66,20 +56,34 @@ func (wr *wranglerRepository) startScanProcess(
 	log.Println("[*] All scanning steps complete. Shutting down.")
 }
 
-func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.WaitGroup {
-	w := models.Worker{
+func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync.WaitGroup, *sync.WaitGroup) {
+	wTCP := models.Worker{
 		ID:             1,
 		Type:           "nmap",
 		Command:        "nmap",
-		Description:    "service discovery scan",
+		Protocol:       "tcp",
+		Description:    "TCP service discovery scan",
 		UserCommand:    make(chan string, 1),
 		WorkerResponse: nil,
 		ErrorChan:      make(chan error),
 		XMLPathsChan:   make(chan string),
 	}
-	// TODO: Make this more comprehensive. Ok for now for debugging and dev
-	w.Args = []string{"-sT", "-p", "443"}
-	workers := []models.Worker{w}
+
+	wUDP := models.Worker{
+		ID:             2,
+		Type:           "nmap",
+		Command:        "nmap",
+		Protocol:       "udp",
+		Description:    "UDP service discovery scan",
+		UserCommand:    make(chan string, 1),
+		WorkerResponse: nil,
+		ErrorChan:      make(chan error),
+		XMLPathsChan:   make(chan string),
+	}
+
+	wTCP.Args = []string{"-sT", "--top-ports", "100"}
+	wUDP.Args = []string{"-sU", "--top-ports", "100"}
+	workers := []models.Worker{wTCP, wUDP}
 
 	log.Println("[*] Starting enumeration workers...")
 	enumWg := wr.startWorkers(project, workers, wr.serviceEnum, batchSize)
@@ -90,9 +94,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) *sync.
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 
-	enumWg.Wait()
-	log.Println("[*] All enumeration processes ended.")
-	return parseWg
+	return parseWg, enumWg
 }
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
 	log.Println("[*] Starting primary scanners")
@@ -123,6 +125,7 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 			Type:        pattern.Tool,
 			Command:     pattern.Tool,
 			Args:        pattern.Args,
+			Protocol:    pattern.Protocol,
 			Description: pattern.Description,
 
 			UserCommand:    make(chan string, 1),
