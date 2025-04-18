@@ -23,6 +23,7 @@ func (wr *wranglerRepository) startScanProcess(
 		fmt.Printf("unable to create temp scope file directory: %s", err)
 	}
 
+	//TODO: Delete failing when directory not empty
 	defer func(name string) {
 		err = os.Remove(name)
 		if err != nil {
