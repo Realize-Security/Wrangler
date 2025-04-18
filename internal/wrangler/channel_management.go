@@ -5,9 +5,10 @@ import (
 	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"fmt"
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/process"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,7 +35,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) 
 							wr.serviceEnum <- models.Target{Host: host}
 							log.Printf("[*] Found live host: %s", hosts)
 						} else {
-							// If we've hit a "", the rest of the []string is empty
+							// If we've hit an empty string, the rest of the []string is presumed empty
 							break
 						}
 					}
@@ -84,30 +85,21 @@ func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh 
 }
 
 func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
-	commands := make(map[string]bool)
 	for _, w := range workers {
 		if w.CancelFunc != nil {
+			log.Printf("Canceling context for worker %d", w.ID)
 			w.CancelFunc()
-		}
-		if w.Cmd != nil && w.Cmd.Process != nil {
-			log.Printf("Sending SIGTERM to worker %d (PID %d)", w.ID, w.Cmd.Process.Pid)
-			err := syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGTERM)
-			if err != nil {
-				commands[w.Command] = true
-			}
-			if w.Cmd.Process != nil && !w.Cmd.ProcessState.Exited() {
-				log.Printf("Worker %d still running, sending SIGKILL", w.ID)
-				_ = syscall.Kill(-w.Cmd.Process.Pid, syscall.SIGKILL)
-			}
 		}
 		if w.UserCommand != nil {
 			select {
 			case w.UserCommand <- WorkerStop:
+				log.Printf("Sent STOP to worker %d", w.ID)
 			case <-time.After(1 * time.Second):
+				log.Printf("Timeout sending STOP to worker %d", w.ID)
 			}
 		}
 	}
-	processWipe(commands)
+	// No need for direct signal sending or processWipe; context cancellation handles process group termination
 }
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
@@ -153,49 +145,6 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 
 		log.Println("[!] No worker errors received, channel closed.")
 	}()
-}
-
-func killProcessesByName(target string) error {
-	parts := strings.Split(target, "/")
-	target = parts[len(parts)-1]
-	procs, err := process.Processes()
-	if err != nil {
-		return fmt.Errorf("could not list processes: %w", err)
-	}
-
-	var killedCount int
-
-	for _, proc := range procs {
-		pname, err := proc.Name()
-		if err != nil {
-			continue
-		}
-
-		if strings.EqualFold(pname, target) {
-			pid := proc.Pid
-			err := proc.Kill()
-			if err != nil {
-				log.Printf("Failed to kill %s (PID %d): %v", pname, pid, err)
-			} else {
-				log.Printf("Killed %s (PID %d)", pname, pid)
-				killedCount++
-			}
-		}
-	}
-
-	if killedCount == 0 {
-		log.Printf("No processes found with name: %s", target)
-	}
-	return nil
-}
-func processWipe(commands map[string]bool) {
-	for key := range commands {
-		err := killProcessesByName(key)
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-	log.Println("Process wipe completed, continuing execution")
 }
 
 // MonitorServiceEnum parses each Nmap XML from
@@ -263,4 +212,33 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 		}(w)
 	}
 	return &wg
+}
+
+func killProcessGroup(cmd *exec.Cmd, worker *models.Worker) {
+	pgid := cmd.Process.Pid
+	if pids, err := listProcessesByPGID(pgid); err == nil && len(pids) > 0 {
+		log.Printf("worker-%d: Found %d remaining processes in group %d after cmd.Wait(), attempting to kill", worker.ID, len(pids), pgid)
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+			log.Printf("worker-%d: Failed to kill process group %d: %v", worker.ID, pgid, err)
+		}
+		// Wait briefly and check again
+		time.Sleep(1 * time.Second)
+		if pids, err := listProcessesByPGID(pgid); err == nil && len(pids) > 0 {
+			log.Printf("worker-%d: WARNING: Still %d processes in group %d after attempting to kill", worker.ID, len(pids), pgid)
+		}
+	}
+}
+
+func listProcessesByPGID(pgid int) ([]int, error) {
+	procs, err := process.Processes()
+	if err != nil {
+		return nil, err
+	}
+	var pids []int
+	for _, p := range procs {
+		if pgidInt, err := p.Ppid(); err == nil && pgidInt == int32(pgid) {
+			pids = append(pids, int(p.Pid))
+		}
+	}
+	return pids, nil
 }

@@ -248,6 +248,8 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 			}
 		}
 
+		killProcessGroup(cmd, worker)
+
 		stdout <- stdoutBuf.String()
 		stderr <- stderrBuf.String()
 		errs <- waitErr
