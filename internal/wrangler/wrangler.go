@@ -17,7 +17,7 @@ import (
 const WorkerStop = "STOP"
 
 var (
-	scopeDir    = "assessment_scope"
+	scopeDir    = "discovered_scope"
 	inScopeFile = "in_scope.txt"
 	excludeFile = "out_of_scope.txt"
 	nonRootUser = ""

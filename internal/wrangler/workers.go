@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -85,7 +86,7 @@ func (wr *wranglerRepository) startWorkers(
 					}
 
 					if !portsAreHardcoded(w) {
-						args = append(args, []string{"-p ", custPorts}...)
+						args = append(args, []string{"-p", custPorts}...)
 					}
 
 					reportName := helpers.SpacesToUnderscores(prefix + w.Description)
@@ -112,25 +113,32 @@ func portsAreHardcoded(worker *models.Worker) bool {
 }
 
 func getUniquePortsForTargets(batch []models.Target) []string {
-	// Create a map[string]bool to track unique ports
 	uniquePorts := make(map[string]bool)
 	for _, host := range batch {
-		p := host.Ports
-		for _, port := range p {
-			if ok := uniquePorts[port]; !ok {
+		for _, port := range host.Ports {
+			if isValidPort(port) {
 				uniquePorts[port] = true
+			} else {
+				log.Printf("[!] Invalid port: %s", port)
 			}
 		}
 	}
 
-	// Convert map keys to []string
-	ports := make([]string, len(uniquePorts))
-	var index int
+	ports := make([]string, 0, len(uniquePorts))
 	for key := range uniquePorts {
-		ports[index] = key
-		index++
+		ports = append(ports, key)
 	}
 	return ports
+}
+
+func isValidPort(port string) bool {
+	if matched, _ := regexp.MatchString(`^\d+$`, port); matched {
+		return true
+	}
+	if matched, _ := regexp.MatchString(`^\d+-\d+$`, port); matched {
+		return true
+	}
+	return false
 }
 
 // A simple wrapper for the actual worker logic
@@ -239,6 +247,8 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 				}
 			}
 		}
+
+		killProcessGroup(cmd, worker)
 
 		stdout <- stdoutBuf.String()
 		stderr <- stderrBuf.String()

@@ -9,56 +9,56 @@ scan-collection:
       args: [ "-sT", "-p", "3389" ]
       description: "Debugging_scan_test_hardcoded_port"
 
-#  - scan-item:
-#      description: "TCP all ports default scripts and versions"
-#      service: "*"
-#      tool: "nmap"
-#      args: ["-sTV", "-p-"]
-#
-#  - scan-item:
-#      description: "TCP all ports SSL ciphers"
-#      service: "*"
-#      tool: "nmap"
-#      args: [ "-sT", "-p-", "--script", "ssl-enum-ciphers" ]
-#
+  - scan-item:
+      description: "TCP all ports default scripts and versions"
+      service: "*"
+      tool: "nmap"
+      args: ["-sTV", "-p-"]
+
+  - scan-item:
+      description: "TCP all ports SSL ciphers"
+      service: "*"
+      tool: "nmap"
+      args: [ "-sT", "-p-", "--script", "ssl-enum-ciphers" ]
+
   - scan-item:
       description: "TCP UDP common admin interfaces"
       service: "*"
       tool: "nmap"
       args: [ "-sTUV", "-p", "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"]
-#
-#  - scan-item:
-#      description: "UDP SNMP all scripts"
-#      service: "snmp"
-#      tool: "nmap"
-#      args: [ "-sU", "--script", "snmp-*" ]
-#
-#  - scan-item:
-#      description: "TCP all ports for SSH algos"
-#      service: "ssh"
-#      tool: "nmap"
-#      args: [ "-sT", "-p-", "--script", "ssh2-enum-algos" ]
-#
-#  - scan-item:
-#      description: "TCP FTP scripts on all ports"
-#      service: "ftp"
-#      tool: "nmap"
-#      args: [ "-sT", "-p-", "--script", "ftp-*" ]
-#
-#  - scan-item:
-#      description: "TCP RDP scripts on all ports"
-#      service: "rdp"
-#      tool: "nmap"
-#      args: [ "-sT", "-p-", "--script", "rdp-*" ]
-#
-#  - scan-item:
-#      description: "TCP SMB scripts on all ports"
-#      service: "smb"
-#      tool: "nmap"
-#      args: [ "-sT", "-p-", "--script", "smb-*" ]
-#
-#  - scan-item:
-#      description: "UDP NTP scripts on all ports"
-#      service: "smb"
-#      tool: "nmap"
-#      args: [ "-sU", "--script", "ntp-info,ntp-monlist" ]
+
+  - scan-item:
+      description: "UDP SNMP all scripts"
+      service: "snmp"
+      tool: "nmap"
+      args: [ "-sU", "--script", "snmp-*" ]
+
+  - scan-item:
+      description: "TCP all ports for SSH algos"
+      service: "ssh"
+      tool: "nmap"
+      args: [ "-sT", "-p-", "--script", "ssh2-enum-algos" ]
+
+  - scan-item:
+      description: "TCP FTP scripts on all ports"
+      service: "ftp"
+      tool: "nmap"
+      args: [ "-sT", "-p-", "--script", "ftp-*" ]
+
+  - scan-item:
+      description: "TCP RDP scripts on all ports"
+      service: "rdp"
+      tool: "nmap"
+      args: [ "-sT", "-p-", "--script", "rdp-*" ]
+
+  - scan-item:
+      description: "TCP SMB scripts on all ports"
+      service: "smb"
+      tool: "nmap"
+      args: [ "-sT", "-p-", "--script", "smb-*" ]
+
+  - scan-item:
+      description: "UDP NTP scripts on all ports"
+      service: "smb"
+      tool: "nmap"
+      args: [ "-sU", "--script", "ntp-info,ntp-monlist" ]
