@@ -141,7 +141,6 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 				os.Exit(1)
 			}
 		}
-
 		log.Println("[!] No worker errors received, channel closed.")
 	}()
 }
