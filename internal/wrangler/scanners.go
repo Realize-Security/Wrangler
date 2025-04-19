@@ -87,13 +87,16 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 
 	log.Println("[*] Starting enumeration workers...")
 	enumWg := wr.startWorkers(project, workers, wr.serviceEnum, batchSize)
+	log.Println("[*] Workers started...")
 
 	parseWg := wr.MonitorServiceEnum(workers, wr.fullScan)
+	log.Println("[*] Service enum started ...")
 
 	wr.SetupSignalHandler(workers, sigCh)
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 
+	log.Println("[*]Returning...")
 	return parseWg, enumWg
 }
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
@@ -141,8 +144,7 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 	wg := wr.startWorkers(project, workers, wr.fullScan, batchSize)
 	if wg == nil {
 		log.Println("[!] No workers returned for primary scanners")
-		var emptyWg sync.WaitGroup
-		return &emptyWg
+		return &sync.WaitGroup{}
 	}
 
 	wr.SetupSignalHandler(workers, sigCh)
