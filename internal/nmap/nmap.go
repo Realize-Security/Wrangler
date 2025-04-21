@@ -3,15 +3,23 @@ package nmap
 import (
 	"Wrangler/pkg/models"
 	"encoding/xml"
+	"fmt"
 	"os"
+	"strconv"
 )
 
 const (
-	TCP       = "tcp"
-	UDP       = "udp"
-	TCPandUDP = "both"
-	SYN       = "ss"
-	NoPorts   = "sn"
+	TCP        = "tcp"
+	UDP        = "udp"
+	TCPandUDP  = "both"
+	SYN        = "ss"
+	NoPorts    = "sn"
+	Paranoid   = "0"
+	Sneaky     = "1"
+	Polite     = "2"
+	Normal     = "3"
+	Aggressive = "4"
+	Insane     = "5"
 )
 
 // Command holds the scan type, targets, and a map of arguments
@@ -42,6 +50,12 @@ func (c *Command) ToArgList() []string {
 // Add returns an Add builder for configuring arguments
 func (c *Command) Add() *Add {
 	return &Add{cmd: c}
+}
+
+// TopPorts sets the top-ports argument
+func (a *Add) TopPorts(value string) *Add {
+	a.cmd.Args["--top-ports"] = value
+	return a
 }
 
 // MinHostGroup sets the min-hostgroup argument
@@ -95,6 +109,30 @@ func (a *Add) InputFile(value string) *Add {
 // OutputAll sets the -oA argument
 func (a *Add) OutputAll(value string) *Add {
 	a.cmd.Args["-oA"] = value
+	return a
+}
+
+// Verbose sets the -v argument
+func (a *Add) Verbose() *Add {
+	a.cmd.Args["-v"] = ""
+	return a
+}
+
+// NoResolve sets the -n argument
+func (a *Add) NoResolve() *Add {
+	a.cmd.Args["-n"] = ""
+	return a
+}
+
+// PerformanceTemplate sets the -T argument with a value from 0 to 5
+func (a *Add) PerformanceTemplate(value string) *Add {
+	iv, err := strconv.Atoi(value)
+	if err != nil || (iv > 5 || iv < 0) {
+		e := fmt.Errorf("%s is not a valid argument for Nmap timing templates", value)
+		panic(e)
+	}
+
+	a.cmd.Args["-T"] = value
 	return a
 }
 

@@ -29,14 +29,14 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			Custom("-PS22,80,443,3389", "").
 			Custom("-PA80,443", "").
 			Custom("-PU40125", "").
-			Custom("-n", "").
 			Custom("-PY80,443", "").
 			Custom("-PE", "").
 			Custom("-PP", "").
 			Custom("-PM", "").
-			Custom("-T", "4").
-			Custom("-v", "").
-			Custom("-iL", f)
+			PerformanceTemplate(nmap.Aggressive).
+			InputFile(f).
+			NoResolve().
+			Verbose()
 		args := cmd.ToArgList()
 
 		workers = append(workers, models.Worker{

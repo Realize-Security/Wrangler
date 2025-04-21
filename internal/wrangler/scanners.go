@@ -101,7 +101,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 		MaxRetries("2").
 		HostTimeout("20m").
 		ScriptTimeout("20m").
-		Custom("--top-ports", "1000")
+		TopPorts("1000")
 
 	// Assign arguments to workers
 	wTCP.Args = tcpCmd.ToArgList()
