@@ -40,23 +40,42 @@ type WranglerRepository interface {
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
 	PrimaryScanners(project *models.Project) *sync.WaitGroup
+	GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target]
+	GetFullScanBroadcast() *TypedBroadcastChannel[models.Target]
 }
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli         models.CLI
-	serviceEnum chan models.Target
-	fullScan    chan models.Target
+	cli           models.CLI
+	serviceEnum   chan models.Target
+	fullScan      chan models.Target
+	serviceEnumBC *TypedBroadcastChannel[models.Target]
+	fullScanBC    *TypedBroadcastChannel[models.Target]
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
+	serviceEnumCh := make(chan models.Target, batchSize)
+	fullScanCh := make(chan models.Target, batchSize)
+
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 	return &wranglerRepository{
-		cli:         cli,
-		serviceEnum: make(chan models.Target, batchSize),
-		fullScan:    make(chan models.Target, batchSize),
+		cli:           cli,
+		serviceEnum:   make(chan models.Target, batchSize),
+		fullScan:      make(chan models.Target, batchSize),
+		serviceEnumBC: NewTypedBroadcastChannel[models.Target](serviceEnumCh),
+		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanCh),
 	}
+}
+
+// GetServiceEnumBroadcast returns the broadcast channel for service enumeration
+func (wr *wranglerRepository) GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target] {
+	return wr.serviceEnumBC
+}
+
+// GetFullScanBroadcast returns the broadcast channel for full scan
+func (wr *wranglerRepository) GetFullScanBroadcast() *TypedBroadcastChannel[models.Target] {
+	return wr.fullScanBC
 }
 
 // NewProject creates a new Project (not yet started).
