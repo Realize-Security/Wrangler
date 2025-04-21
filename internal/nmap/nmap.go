@@ -8,6 +8,12 @@ import (
 	"strconv"
 )
 
+var (
+	VerbosityLow    = "-v"
+	VerbosityMedium = "-vv"
+	VerbosityHigh   = "-vvv"
+)
+
 const (
 	TCP        = "tcp"
 	UDP        = "udp"
@@ -112,9 +118,9 @@ func (a *Add) OutputAll(value string) *Add {
 	return a
 }
 
-// Verbose sets the -v argument
-func (a *Add) Verbose() *Add {
-	a.cmd.Args["-v"] = ""
+// Verbose sets the verbosity level
+func (a *Add) Verbose(level string) *Add {
+	a.cmd.Args[level] = ""
 	return a
 }
 

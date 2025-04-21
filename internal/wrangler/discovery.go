@@ -36,7 +36,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			PerformanceTemplate(nmap.Aggressive).
 			InputFile(f).
 			NoResolve().
-			Verbose()
+			Verbose(nmap.VerbosityLow)
 		args := cmd.ToArgList()
 
 		workers = append(workers, models.Worker{
