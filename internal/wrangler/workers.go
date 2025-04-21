@@ -111,7 +111,9 @@ func definePorts(w *models.Worker, batch []models.Target) {
 	var udp []string
 	if udpPorts == nil || len(udpPorts) == 0 {
 		fmt.Println("[!] batch tcpPorts is nil or empty. setting top 1000 UDP ports")
-		udp = []string{"--top-ports", "1000"}
+		cmd := nmap.NewCommand("", "", nil)
+		cmd.Add().TopPorts("1000")
+		udp = cmd.ToArgList()
 	} else {
 		tcp = []string{strings.Join(udpPorts, ",")}
 	}
@@ -193,7 +195,6 @@ func runWorker(w *models.Worker, args []string) {
 		}
 	}
 
-	// TODO: Check this. ErrorChan is never not nil, its an instance of a chan
 	if w.ErrorChan != nil {
 		w.ErrorChan <- err
 		log.Printf("[worker-%s] Sent error to ErrorChan", w.Description)
