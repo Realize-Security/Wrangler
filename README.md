@@ -18,6 +18,6 @@ Currently only service discovery on TCP is supported. This will have to be exten
 
 ## TODO:
 
-1. Implement UDP and SCTP support. Requires extension of the host/port relationship structs.
+1. Implement SCTP support. 
 2. When application exits the report and scope directories are owned by root. Needs to be the user specified by the user.
 3. Rate limiting on number of concurrent batches.
