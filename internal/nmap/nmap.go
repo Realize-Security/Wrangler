@@ -152,7 +152,6 @@ func (a *Add) Custom(key, value string) *Add {
 func NewCommand(scanType, targets string, customArgs map[string]string) *Command {
 	// Default arguments
 	defaultArgs := make(map[string]string)
-	defaultArgs["--unique"] = ""
 
 	// Apply scan-type flags
 	switch scanType {
