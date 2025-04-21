@@ -17,7 +17,7 @@ import (
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) chan struct{} {
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
 	done := make(chan struct{})
@@ -50,7 +50,6 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) 
 		log.Println("[*] All responses monitored, service enumeration channel closed.")
 		close(done)
 	}()
-	return done
 }
 
 // getUpHosts extract IPv4 addresses from Nmap stdout
@@ -142,7 +141,6 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 				os.Exit(1)
 			}
 		}
-
 		log.Println("[!] No worker errors received, channel closed.")
 	}()
 }
@@ -190,10 +188,10 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 
 			for _, host := range nmapRun.Hosts {
 				if host.Status.State == "up" {
-					var openPorts []string
+					var openPorts []models.NmapPort
 					for _, p := range host.Ports.Port {
 						if p.State.State == "open" {
-							openPorts = append(openPorts, p.PortID)
+							openPorts = append(openPorts, p)
 						}
 					}
 					if len(openPorts) > 0 {

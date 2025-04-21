@@ -2,6 +2,7 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
+	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"context"
 	"fmt"
@@ -12,22 +13,32 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) (*sync.WaitGroup, chan struct{}) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) {
 	var workers []models.Worker
 
 	for i, chunk := range chunkSlice(inScope, batchSize) {
 		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
-			return nil, nil
+			return
 		}
 
-		args := []string{
-			"-sn", "-PS22,80,443,3389",
-			"-PA80,443", "-PU40125", "-n",
-			"-PY80,443", "-PE", "-PP",
-			"-PM", "-T4", "-v", "-iL", f,
-		}
+		// Configure TCP command
+		cmd := nmap.NewCommand("-sn", "-p-", nil)
+		cmd.Add().
+			Custom("-PS22,80,443,3389", "").
+			Custom("-PA80,443", "").
+			Custom("-PU40125", "").
+			Custom("-PY80,443", "").
+			Custom("-PE", "").
+			Custom("-PP", "").
+			Custom("-PM", "").
+			PerformanceTemplate(nmap.Aggressive).
+			InputFile(f).
+			NoResolve().
+			Verbose()
+		args := cmd.ToArgList()
+
 		workers = append(workers, models.Worker{
 			ID:             0,
 			Type:           "nmap",
@@ -40,26 +51,25 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	discoveryDone := wr.DiscoveryResponseMonitor(workers)
-
-	wg := wr.DiscoveryScan(workers, excludeFile)
+	wr.DiscoveryResponseMonitor(workers)
+	wr.DiscoveryScan(workers, excludeFile)
 
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
-
-	return wg, discoveryDone
 }
 
 // DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
-func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) *sync.WaitGroup {
+func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) {
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Add(1)
 		w := &workers[i]
 		w.Command = "nmap"
 		if exclude != "" {
-			w.Args = append(w.Args, "--excludefile", exclude)
+			cmd := nmap.NewCommand("", "", nil)
+			cmd.Add().ExcludeFile(exclude)
+			w.Args = append(w.Args, cmd.ToArgList()...)
 		}
 
 		go func(dw *models.Worker) {
@@ -103,7 +113,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			dw.UserCommand <- "run"
 		}(w)
 	}
-	return &wg
 }
 
 // chunkSlice splits the slice `src` into multiple slices of length `chunkSize`. The last chunk may be shorter if there aren't enough elements left.

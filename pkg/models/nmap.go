@@ -69,7 +69,7 @@ type HostName struct {
 // Ports wraps both <extraports> (if present) and multiple <port> entries.
 type Ports struct {
 	ExtraPorts []ExtraPorts `xml:"extraports"`
-	Port       []Port       `xml:"port"`
+	Port       []NmapPort   `xml:"port"`
 }
 
 // ExtraPorts models <extraports state="filtered" count="65522"> … </extraports>.
@@ -84,8 +84,8 @@ type ExtraReasons struct {
 	Count  string `xml:"count,attr"`
 }
 
-// Port corresponds to <port protocol="tcp" portid="80"> … </port>.
-type Port struct {
+// NmapPort corresponds to <port protocol="tcp" portid="80"> … </port>.
+type NmapPort struct {
 	Protocol string    `xml:"protocol,attr"`
 	PortID   string    `xml:"portid,attr"`
 	State    PortState `xml:"state"`

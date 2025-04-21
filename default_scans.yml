@@ -2,63 +2,67 @@ scan-collection:
   - scan-item:
       tool: "nmap"
       args: [ "-sS" ]
+      protocol: "tcp"
       description: "Debugging_scan_test_random_open_port"
 
   - scan-item:
       tool: "nmap"
       args: [ "-sT", "-p", "3389" ]
+      protocol: "tcp"
       description: "Debugging_scan_test_hardcoded_port"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
-      service: "*"
       tool: "nmap"
       args: ["-sTV"]
+      protocol: "tcp"
+      scripts: ""
 
   - scan-item:
       description: "TCP all ports SSL ciphers"
-      service: "*"
       tool: "nmap"
       args: [ "-sT", "--script", "ssl-enum-ciphers" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "TCP UDP common admin interfaces"
-      service: "*"
       tool: "nmap"
       args: [ "-sTUV", "-p", "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"]
+      protocol: "both"
 
   - scan-item:
       description: "UDP SNMP all scripts"
       service: "snmp"
       tool: "nmap"
       args: [ "-sU", "--script", "snmp-*" ]
+      protocol: "udp"
 
   - scan-item:
       description: "TCP all ports for SSH algos"
-      service: "ssh"
       tool: "nmap"
       args: [ "-sT", "--script", "ssh2-enum-algos" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "TCP FTP scripts on all ports"
-      service: "ftp"
       tool: "nmap"
       args: [ "-sT", "--script", "ftp-*" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
-      service: "rdp"
       tool: "nmap"
       args: [ "-sT", "--script", "rdp-*" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
-      service: "smb"
       tool: "nmap"
       args: [ "-sT", "--script", "smb-*" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "UDP NTP scripts on all ports"
-      service: "smb"
       tool: "nmap"
       args: [ "-sU", "--script", "ntp-info,ntp-monlist" ]
+      protocol: "udp"
