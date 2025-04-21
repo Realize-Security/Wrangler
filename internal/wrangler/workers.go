@@ -2,6 +2,7 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
+	"Wrangler/internal/nmap"
 	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"bytes"
@@ -70,16 +71,19 @@ func (wr *wranglerRepository) startWorkers(
 					defer wg.Done()
 
 					args := append([]string{}, w.Args...)
-					args = append(args, "-iL", localPath)
-					if project.ExcludeScopeFile != "" {
-						args = append(args, "--excludefile", project.ExcludeScopeFile, "--unique")
-					}
-
 					reportName := helpers.SpacesToUnderscores(prefix + w.Description)
 					reportPath := path.Join(project.ReportDirParent, reportName)
-					args = append(args, "-oA", reportPath)
 					w.XMLReportPath = reportPath + ".xml"
 
+					cmd := nmap.NewCommand("", "", nil)
+					cmd.Add().
+						InputFile(localPath).
+						OutputAll(reportPath)
+					args = append(args, cmd.ToArgList()...)
+
+					if project.ExcludeScopeFile != "" {
+						cmd.Add().ExcludeFile(project.ExcludeScopeFile)
+					}
 					runWorker(w, args)
 				}(w, f)
 			}

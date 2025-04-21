@@ -16,6 +16,7 @@ scan-collection:
       tool: "nmap"
       args: ["-sTV"]
       protocol: "tcp"
+      scripts: ""
 
   - scan-item:
       description: "TCP all ports SSL ciphers"

@@ -2,6 +2,7 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
+	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
@@ -81,8 +82,31 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 		XMLPathsChan:   make(chan string),
 	}
 
-	wTCP.Args = []string{"-sT", "--top-ports", "100"}
-	wUDP.Args = []string{"-sU", "--top-ports", "100"}
+	// Configure TCP command
+	tcpCmd := nmap.NewCommand(nmap.TCP, "-p-", nil)
+	tcpCmd.Add().
+		MinHostGroup("100").
+		MinRate("150").
+		MinRTTTimeout("20m").
+		MaxRetries("2").
+		HostTimeout("20m").
+		ScriptTimeout("20m")
+
+	// Configure UDP command
+	udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
+	udpCmd.Add().
+		MinHostGroup("100").
+		MinRate("150").
+		MinRTTTimeout("20m").
+		MaxRetries("2").
+		HostTimeout("20m").
+		ScriptTimeout("20m").
+		Custom("--top-ports", "1000")
+
+	// Assign arguments to workers
+	wTCP.Args = tcpCmd.ToArgList()
+	wUDP.Args = udpCmd.ToArgList()
+
 	workers := []models.Worker{wTCP, wUDP}
 
 	log.Println("[*] Starting enumeration workers...")
@@ -99,6 +123,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 	log.Println("[*]Returning...")
 	return parseWg, enumWg
 }
+
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
 	log.Println("[*] Starting primary scanners")
 
@@ -124,13 +149,12 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 	var workers []models.Worker
 	for i, pattern := range args {
 		w := models.Worker{
-			ID:          i,
-			Type:        pattern.Tool,
-			Command:     pattern.Tool,
-			Args:        pattern.Args,
-			Protocol:    pattern.Protocol,
-			Description: pattern.Description,
-
+			ID:             i,
+			Type:           pattern.Tool,
+			Command:        pattern.Tool,
+			Args:           pattern.Args,
+			Protocol:       pattern.Protocol,
+			Description:    pattern.Description,
 			UserCommand:    make(chan string, 1),
 			WorkerResponse: make(chan string, 1),
 			ErrorChan:      make(chan error, 1),

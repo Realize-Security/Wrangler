@@ -2,6 +2,7 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
+	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"context"
 	"fmt"
@@ -22,12 +23,22 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			return
 		}
 
-		args := []string{
-			"-sn", "-PS22,80,443,3389",
-			"-PA80,443", "-PU40125", "-n",
-			"-PY80,443", "-PE", "-PP",
-			"-PM", "-T4", "-v", "-iL", f,
-		}
+		// Configure TCP command
+		cmd := nmap.NewCommand("-sn", "-p-", nil)
+		cmd.Add().
+			Custom("-PS22,80,443,3389", "").
+			Custom("-PA80,443", "").
+			Custom("-PU40125", "").
+			Custom("-n", "").
+			Custom("-PY80,443", "").
+			Custom("-PE", "").
+			Custom("-PP", "").
+			Custom("-PM", "").
+			Custom("-T", "4").
+			Custom("-v", "").
+			Custom("-iL", f)
+		args := cmd.ToArgList()
+
 		workers = append(workers, models.Worker{
 			ID:             0,
 			Type:           "nmap",
@@ -56,7 +67,9 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 		w := &workers[i]
 		w.Command = "nmap"
 		if exclude != "" {
-			w.Args = append(w.Args, "--excludefile", exclude)
+			cmd := nmap.NewCommand("", "", nil)
+			cmd.Add().ExcludeFile(exclude)
+			w.Args = append(w.Args, cmd.ToArgList()...)
 		}
 
 		go func(dw *models.Worker) {
