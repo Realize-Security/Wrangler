@@ -107,10 +107,10 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		tcp = []string{strings.Join(tcpPorts, ",")}
 	}
 
-	udpPorts := getUniquePortsForTargets(batch, "tcp")
+	udpPorts := getUniquePortsForTargets(batch, "udp")
 	var udp []string
 	if udpPorts == nil || len(udpPorts) == 0 {
-		fmt.Println("[!] batch tcpPorts is nil or empty. setting top 1000 UDP ports")
+		fmt.Println("[!] batch udpPorts is nil or empty. setting top 1000 UDP ports")
 		cmd := nmap.NewCommand("", "", nil)
 		cmd.Add().TopPorts("1000")
 		udp = cmd.ToArgList()
