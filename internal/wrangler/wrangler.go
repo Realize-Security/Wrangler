@@ -55,16 +55,38 @@ type wranglerRepository struct {
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
-	serviceEnumCh := make(chan models.Target, batchSize)
-	fullScanCh := make(chan models.Target, batchSize)
+	// Source channels for incoming targets
+	serviceEnumSource := make(chan models.Target, batchSize)
+	fullScanSource := make(chan models.Target, batchSize)
 
+	// Main pipeline channels
+	serviceEnumMain := make(chan models.Target, batchSize)
+	fullScanMain := make(chan models.Target, batchSize)
+
+	// Broadcast channels
+	serviceEnumBroadcast := make(chan models.Target, batchSize)
+	fullScanBroadcast := make(chan models.Target, batchSize)
+
+	// tee goroutines
+	go teeTargets(serviceEnumSource, serviceEnumMain, serviceEnumBroadcast)
+	go teeTargets(fullScanSource, fullScanMain, fullScanBroadcast)
+
+	// Signal handling (unchanged)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
+
+	// Return the repository with all channels
 	return &wranglerRepository{
 		cli:           cli,
-		serviceEnum:   make(chan models.Target, batchSize),
-		fullScan:      make(chan models.Target, batchSize),
-		serviceEnumBC: NewTypedBroadcastChannel[models.Target](serviceEnumCh),
-		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanCh),
+		serviceEnum:   serviceEnumMain,
+		fullScan:      fullScanMain,
+		serviceEnumBC: NewTypedBroadcastChannel[models.Target](serviceEnumBroadcast),
+		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanBroadcast),
+	}
+}
+func teeTargets(in <-chan models.Target, out1, out2 chan<- models.Target) {
+	for t := range in {
+		out1 <- t
+		out2 <- t
 	}
 }
 
