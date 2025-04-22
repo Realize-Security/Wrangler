@@ -87,20 +87,14 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 	tcpCmd.Add().
 		MinHostGroup("100").
 		MinRate("150").
-		MinRTTTimeout("20m").
-		MaxRetries("2").
-		HostTimeout("20m").
-		ScriptTimeout("20m")
+		MaxRetries("2")
 
 	// Configure UDP command
 	udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
 	udpCmd.Add().
 		MinHostGroup("100").
 		MinRate("150").
-		MinRTTTimeout("20m").
 		MaxRetries("2").
-		HostTimeout("20m").
-		ScriptTimeout("20m").
 		TopPorts("1000")
 
 	// Assign arguments to workers
@@ -109,24 +103,20 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 
 	workers := []models.Worker{wTCP, wUDP}
 
-	log.Println("[*] Starting enumeration workers...")
 	enumWg := wr.startWorkers(project, workers, wr.serviceEnum, batchSize)
 	log.Println("[*] Workers started...")
 
-	parseWg := wr.MonitorServiceEnum(workers, wr.fullScan)
-	log.Println("[*] Service enum started ...")
+	parseWg := wr.MonitorServiceEnum(workers)
+	log.Println("[*] Service enumeration started...")
 
 	wr.SetupSignalHandler(workers, sigCh)
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 
-	log.Println("[*]Returning...")
 	return parseWg, enumWg
 }
 
 func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
-	log.Println("[*] Starting primary scanners")
-
 	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
 		log.Printf("[!] Unable to load scans: %s", err)

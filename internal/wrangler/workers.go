@@ -98,19 +98,19 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		return
 	}
 
-	tcpPorts := getUniquePortsForTargets(batch, "tcp")
+	tcpPorts := getUniquePortsForTargets(batch, nmap.TCP)
 	var tcp []string
-	if tcpPorts == nil || len(tcpPorts) == 0 {
-		fmt.Println("[!] batch tcpPorts is nil or empty. setting all TCP ports")
+	if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
+		fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
 		tcp = []string{"-p-"}
 	} else {
 		tcp = []string{strings.Join(tcpPorts, ",")}
 	}
 
-	udpPorts := getUniquePortsForTargets(batch, "tcp")
+	udpPorts := getUniquePortsForTargets(batch, nmap.UDP)
 	var udp []string
-	if udpPorts == nil || len(udpPorts) == 0 {
-		fmt.Println("[!] batch tcpPorts is nil or empty. setting top 1000 UDP ports")
+	if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
+		fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
 		cmd := nmap.NewCommand("", "", nil)
 		cmd.Add().TopPorts("1000")
 		udp = cmd.ToArgList()
@@ -118,10 +118,11 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		tcp = []string{strings.Join(udpPorts, ",")}
 	}
 
-	switch w.Protocol {
-	case "tcp":
+	if len(tcp) > 0 {
 		w.Args = append(w.Args, tcp...)
-	case "udp":
+	}
+
+	if len(udp) > 0 {
 		w.Args = append(w.Args, udp...)
 	}
 }
@@ -141,8 +142,6 @@ func getUniquePortsForTargets(batch []models.Target, protocol string) []string {
 		for _, port := range host.Ports {
 			if isValidPort(port.PortID) && port.Protocol == protocol {
 				uniquePorts[port.PortID] = true
-			} else {
-				log.Printf("[!] Invalid port: %s", port)
 			}
 		}
 	}

@@ -15,6 +15,71 @@ import (
 	"time"
 )
 
+// MonitorServiceEnum parses each Nmap XML from
+// the service-enumeration stage & pushes open hosts/ports
+// onto `fullScan` channel immediately.
+func (wr *wranglerRepository) MonitorServiceEnum(
+	workers []models.Worker,
+) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	if len(workers) == 0 {
+		log.Println("[!] No workers to monitor")
+		return &wg
+	}
+
+	log.Printf("[*] Starting to monitor %d workers", len(workers))
+
+	for i := range workers {
+		w := &workers[i]
+		wg.Add(1)
+		go func(w *models.Worker) {
+			log.Printf("[*] Worker %d goroutine started", w.ID)
+			defer func() {
+				wg.Done()
+				log.Printf("[*] Worker %d goroutine wg.Done() completed", w.ID)
+			}()
+
+			log.Printf("[*] Waiting for XML path from worker %d", w.ID)
+			xmlPath, ok := <-w.XMLPathsChan
+			if !ok {
+				log.Printf("[*] XMLPathsChan closed for worker %d", w.ID)
+				return
+			}
+
+			log.Printf("[*] Received XML path %s from worker %d", xmlPath, w.ID)
+
+			nmapRun, err := nmap.ReadNmapXML(xmlPath)
+			if err != nil {
+				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
+				w.ErrorChan <- err
+				return
+			}
+
+			for _, host := range nmapRun.Hosts {
+				if host.Status.State == "up" {
+					var openPorts []models.NmapPort
+					for _, p := range host.Ports.Port {
+						if p.State.State == "open" {
+							openPorts = append(openPorts, p)
+						}
+					}
+					if len(openPorts) > 0 {
+						log.Printf("[*] Found %s -> Ports: %v", host.Addresses[0].Addr, openPorts)
+						t := models.Target{
+							Host:  host.Addresses[0].Addr,
+							Ports: openPorts,
+						}
+						wr.fullScan <- t
+						log.Printf("[*] Sent %s to fullScan", t.Host)
+					}
+				}
+			}
+			log.Printf("[*] XML processed for worker %d", w.ID)
+		}(w)
+	}
+	return &wg
+}
+
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
 func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
@@ -98,7 +163,6 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			}
 		}
 	}
-	// No need for direct signal sending or processWipe; context cancellation handles process group termination
 }
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
@@ -116,8 +180,8 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
 					errCh <- fmt.Errorf(
-						"worker %d encountered an OS error: %w, stderr: %s",
-						w.ID, workerErr, w.StdError,
+						"worker %d encountered an OS error: %s, stderr: %s",
+						w.ID, workerErr.Error(), w.StdError,
 					)
 				}
 			}
@@ -143,73 +207,6 @@ func (wr *wranglerRepository) ListenToWorkerErrors(workers []models.Worker, errC
 		}
 		log.Println("[!] No worker errors received, channel closed.")
 	}()
-}
-
-// MonitorServiceEnum parses each Nmap XML from
-// the service-enumeration stage & pushes open hosts/ports
-// onto `fullScan` channel immediately.
-func (wr *wranglerRepository) MonitorServiceEnum(
-	workers []models.Worker,
-	fullScan chan<- models.Target,
-) *sync.WaitGroup {
-	var wg sync.WaitGroup
-	if len(workers) == 0 {
-		log.Println("[!] No workers to monitor")
-		return &wg
-	}
-
-	log.Printf("[*] Starting to monitor %d workers", len(workers))
-
-	for i := range workers {
-		w := &workers[i]
-		wg.Add(1)
-		go func(w *models.Worker) {
-			log.Printf("[*] Worker %d goroutine started", w.ID)
-			defer func() {
-				wg.Done()
-				log.Printf("[*] Worker %d goroutine wg.Done() completed", w.ID)
-			}()
-
-			log.Printf("[*] Waiting for XML path from worker %d", w.ID)
-			xmlPath, ok := <-w.XMLPathsChan
-			if !ok {
-				log.Printf("[*] XMLPathsChan closed for worker %d", w.ID)
-				return
-			}
-
-			log.Printf("[*] Received XML path %s from worker %d", xmlPath, w.ID)
-
-			nmapRun, err := nmap.ReadNmapXML(xmlPath)
-			if err != nil {
-				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
-				w.ErrorChan <- err
-				return
-			}
-
-			for _, host := range nmapRun.Hosts {
-				if host.Status.State == "up" {
-					var openPorts []models.NmapPort
-					for _, p := range host.Ports.Port {
-						if p.State.State == "open" {
-							openPorts = append(openPorts, p)
-						}
-					}
-					if len(openPorts) > 0 {
-						log.Printf("[*] Found %s -> Ports: %v", host.Addresses[0].Addr, openPorts)
-						t := models.Target{
-							Host:  host.Addresses[0].Addr,
-							Ports: openPorts,
-						}
-						log.Printf("[*] Sending target %s to fullScan", t.Host)
-						fullScan <- t
-						log.Printf("[*] Sent target %s to fullScan", t.Host)
-					}
-				}
-			}
-			log.Printf("[*] Finished processing XML for worker %d", w.ID)
-		}(w)
-	}
-	return &wg
 }
 
 func killProcessGroup(cmd *exec.Cmd, worker *models.Worker) {

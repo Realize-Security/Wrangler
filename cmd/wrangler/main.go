@@ -4,6 +4,8 @@ import (
 	"Wrangler/internal/wrangler"
 	"Wrangler/pkg/models"
 	"github.com/alecthomas/kong"
+	"log"
+	"sync"
 )
 
 var (
@@ -21,10 +23,59 @@ func main() {
 		}),
 	)
 
-	// Initialise a new project
 	wr := wrangler.NewWranglerRepository(cli)
 	project = wr.NewProject()
+	serviceEnumBC := wr.GetServiceEnumBroadcast()
+	fullScanBC := wr.GetFullScanBroadcast()
+
+	// Create monitoring subscription for service enumeration
+	serviceEnumMonitor := serviceEnumBC.Subscribe(100)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		monitorServiceEnum(serviceEnumMonitor)
+	}()
+
+	fullScanMonitor := fullScanBC.Subscribe(100)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		monitorFullScan(fullScanMonitor)
+	}()
+
 	wr.ProjectInit(project)
+	wg.Wait()
+}
+
+// monitorServiceEnum logs targets from the service enumeration channel
+func monitorServiceEnum(ch <-chan models.Target) {
+	log.Println("Starting service enumeration monitor...")
+	targetCount := 0
+
+	for target := range ch {
+		targetCount++
+		log.Printf("[SERVICE-ENUM-MONITOR] Found target: %s", target.Host)
+	}
+
+	log.Printf("[SERVICE-ENUM-MONITOR] Finished monitoring with %d targets", targetCount)
+}
+
+// monitorFullScan logs targets from the full scan channel
+func monitorFullScan(ch <-chan models.Target) {
+	log.Println("[*] Starting full scan monitor...")
+	targetCount := 0
+	portCount := 0
+
+	for target := range ch {
+		targetCount++
+		portCount += len(target.Ports)
+		log.Printf("[FULL-SCAN-MONITOR] Found target: %s with %d ports",
+			target.Host, len(target.Ports))
+	}
+
+	log.Printf("[FULL-SCAN-MONITOR] Finished monitoring with %d targets and %d ports",
+		targetCount, portCount)
 }
 
 func description() string {
