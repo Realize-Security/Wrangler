@@ -3,11 +3,9 @@ package main
 import (
 	"Wrangler/internal/wrangler"
 	"Wrangler/pkg/models"
-	"fmt"
 	"github.com/alecthomas/kong"
 	"log"
 	"sync"
-	"time"
 )
 
 var (
@@ -25,18 +23,13 @@ func main() {
 		}),
 	)
 
-	// Initialise a new project
 	wr := wrangler.NewWranglerRepository(cli)
 	project = wr.NewProject()
-	wr.ProjectInit(project)
-	// Get broadcast channels for monitoring
 	serviceEnumBC := wr.GetServiceEnumBroadcast()
 	fullScanBC := wr.GetFullScanBroadcast()
 
 	// Create monitoring subscription for service enumeration
 	serviceEnumMonitor := serviceEnumBC.Subscribe(100)
-
-	// Start service enumeration monitor
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -44,19 +37,15 @@ func main() {
 		monitorServiceEnum(serviceEnumMonitor)
 	}()
 
-	// Create monitoring subscription for full scan
 	fullScanMonitor := fullScanBC.Subscribe(100)
-
-	// Start full scan monitor
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		monitorFullScan(fullScanMonitor)
 	}()
 
-	// Wait for all monitoring to complete
+	wr.ProjectInit(project)
 	wg.Wait()
-
 }
 
 // monitorServiceEnum logs targets from the service enumeration channel
@@ -67,9 +56,6 @@ func monitorServiceEnum(ch <-chan models.Target) {
 	for target := range ch {
 		targetCount++
 		log.Printf("[SERVICE-ENUM-MONITOR] Found target: %s", target.Host)
-
-		// Process the target without affecting the original workflow
-		// For example, update a UI, store in a database, etc.
 	}
 
 	log.Printf("[SERVICE-ENUM-MONITOR] Finished monitoring with %d targets", targetCount)
@@ -77,7 +63,7 @@ func monitorServiceEnum(ch <-chan models.Target) {
 
 // monitorFullScan logs targets from the full scan channel
 func monitorFullScan(ch <-chan models.Target) {
-	log.Println("Starting full scan monitor...")
+	log.Println("[*] Starting full scan monitor...")
 	targetCount := 0
 	portCount := 0
 
@@ -86,58 +72,10 @@ func monitorFullScan(ch <-chan models.Target) {
 		portCount += len(target.Ports)
 		log.Printf("[FULL-SCAN-MONITOR] Found target: %s with %d ports",
 			target.Host, len(target.Ports))
-
-		// Process the target without affecting the original workflow
-		// For example, update a UI, store in a database, etc.
 	}
 
 	log.Printf("[FULL-SCAN-MONITOR] Finished monitoring with %d targets and %d ports",
 		targetCount, portCount)
-}
-
-// Example of a real-time status tracker
-type StatusTracker struct {
-	mu             sync.RWMutex
-	livehostCount  int
-	serviceCount   int
-	lastUpdated    time.Time
-	completedHosts map[string]bool
-	completedPorts map[string]int
-}
-
-func NewStatusTracker() *StatusTracker {
-	return &StatusTracker{
-		lastUpdated:    time.Now(),
-		completedHosts: make(map[string]bool),
-		completedPorts: make(map[string]int),
-	}
-}
-
-func (st *StatusTracker) UpdateFromTarget(target models.Target) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	if !st.completedHosts[target.Host] {
-		st.livehostCount++
-		st.completedHosts[target.Host] = true
-	}
-
-	currentPorts := st.completedPorts[target.Host]
-	newPorts := len(target.Ports)
-	if newPorts > currentPorts {
-		st.serviceCount += (newPorts - currentPorts)
-		st.completedPorts[target.Host] = newPorts
-	}
-
-	st.lastUpdated = time.Now()
-}
-
-func (st *StatusTracker) GetStatus() string {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-
-	return fmt.Sprintf("Live hosts: %d, Services: %d, Last updated: %s",
-		st.livehostCount, st.serviceCount, st.lastUpdated.Format("15:04:05"))
 }
 
 func description() string {
