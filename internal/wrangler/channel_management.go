@@ -20,7 +20,6 @@ import (
 // onto `fullScan` channel immediately.
 func (wr *wranglerRepository) MonitorServiceEnum(
 	workers []models.Worker,
-	fullScan chan<- models.Target,
 ) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	if len(workers) == 0 {
@@ -70,13 +69,12 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 							Host:  host.Addresses[0].Addr,
 							Ports: openPorts,
 						}
-						log.Printf("[*] Sending target %s to fullScan", t.Host)
-						fullScan <- t
-						log.Printf("[*] Sent target %s to fullScan", t.Host)
+						wr.fullScan <- t
+						log.Printf("[*] Sent %s to fullScan", t.Host)
 					}
 				}
 			}
-			log.Printf("[*] Finished processing XML for worker %d", w.ID)
+			log.Printf("[*] XML processed for worker %d", w.ID)
 		}(w)
 	}
 	return &wg
@@ -165,7 +163,6 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			}
 		}
 	}
-	// No need for direct signal sending or processWipe; context cancellation handles process group termination
 }
 
 // DrainWorkerErrors watches each worker's `ErrorChan` until it's closed.
