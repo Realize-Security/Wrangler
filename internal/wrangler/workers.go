@@ -141,8 +141,6 @@ func getUniquePortsForTargets(batch []models.Target, protocol string) []string {
 		for _, port := range host.Ports {
 			if isValidPort(port.PortID) && port.Protocol == protocol {
 				uniquePorts[port.PortID] = true
-			} else {
-				log.Printf("[!] Invalid port: %s", port)
 			}
 		}
 	}
