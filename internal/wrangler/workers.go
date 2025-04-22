@@ -98,18 +98,18 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		return
 	}
 
-	tcpPorts := getUniquePortsForTargets(batch, "tcp")
+	tcpPorts := getUniquePortsForTargets(batch, nmap.TCP)
 	var tcp []string
-	if (w.Protocol == "tcp" || w.Protocol == "both") && (tcpPorts == nil || len(tcpPorts) == 0) {
+	if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
 		fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
 		tcp = []string{"-p-"}
 	} else {
 		tcp = []string{strings.Join(tcpPorts, ",")}
 	}
 
-	udpPorts := getUniquePortsForTargets(batch, "udp")
+	udpPorts := getUniquePortsForTargets(batch, nmap.UDP)
 	var udp []string
-	if (w.Protocol == "udp" || w.Protocol == "both") && (udpPorts == nil || len(udpPorts) == 0) {
+	if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
 		fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
 		cmd := nmap.NewCommand("", "", nil)
 		cmd.Add().TopPorts("1000")
