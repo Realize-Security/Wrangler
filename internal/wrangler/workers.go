@@ -118,10 +118,11 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		tcp = []string{strings.Join(udpPorts, ",")}
 	}
 
-	switch w.Protocol {
-	case "tcp":
+	if len(tcp) > 0 {
 		w.Args = append(w.Args, tcp...)
-	case "udp":
+	}
+
+	if len(udp) > 0 {
 		w.Args = append(w.Args, udp...)
 	}
 }
