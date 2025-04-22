@@ -3,6 +3,7 @@ package wrangler
 import (
 	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
+	"Wrangler/pkg/serializers"
 	"fmt"
 	"log"
 	"os"
@@ -39,18 +40,20 @@ type WranglerRepository interface {
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	PrimaryScanners(project *models.Project) *sync.WaitGroup
+	PrimaryScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup
 	GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target]
 	GetFullScanBroadcast() *TypedBroadcastChannel[models.Target]
 }
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli           models.CLI
-	serviceEnum   chan models.Target
-	fullScan      chan models.Target
-	serviceEnumBC *TypedBroadcastChannel[models.Target]
-	fullScanBC    *TypedBroadcastChannel[models.Target]
+	cli             models.CLI
+	serviceEnum     chan models.Target
+	fullScan        chan models.Target
+	serviceEnumBC   *TypedBroadcastChannel[models.Target]
+	fullScanBC      *TypedBroadcastChannel[models.Target]
+	staticWorkers   []models.Worker
+	templateWorkers []models.Worker
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
@@ -191,5 +194,49 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		wr.serviceEnum = make(chan models.Target, len(inScope))
 	}
 
+	wr.loadWorkers()
 	wr.startScanProcess(project, inScope, exclude)
+}
+
+func (wr *wranglerRepository) loadWorkers() {
+	static := make([]models.Worker, 0)
+	templated := make([]models.Worker, 0)
+	scans, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+	if err != nil {
+		log.Printf("[!] Unable to load scans: %s", err)
+		panic(err.Error())
+	}
+
+	log.Printf("[*] Loaded %d scans from YAML", len(scans))
+
+	var workers []models.Worker
+	for i, pattern := range scans {
+		w := models.Worker{
+			ID:             i,
+			Type:           pattern.Tool,
+			Command:        pattern.Tool,
+			Args:           pattern.Args,
+			Protocol:       pattern.Protocol,
+			Description:    pattern.Description,
+			UserCommand:    make(chan string, 1),
+			WorkerResponse: make(chan string, 1),
+			ErrorChan:      make(chan error, 1),
+			XMLPathsChan:   make(chan string, 1),
+		}
+		workers = append(workers, w)
+	}
+
+	for _, worker := range workers {
+		if portsAreHardcoded(&worker) {
+			static = append(static, worker)
+		} else {
+			templated = append(templated, worker)
+		}
+	}
+
+	wr.staticWorkers = static
+	wr.templateWorkers = templated
+
+	log.Printf("[*] Loaded %d static workers", len(static))
+	log.Printf("[*] Loaded %d templated workers", len(templated))
 }

@@ -40,15 +40,24 @@ func (wr *wranglerRepository) startScanProcess(
 		close(discoveryDone)
 	}
 
+	log.Println("[*] Starting static worker templates")
+	staticWg := wr.PrimaryScanners(project, wr.staticWorkers)
+	if staticWg != nil {
+		log.Println("[DEBUG] staticWg.Wait() starting")
+		staticWg.Wait()
+		log.Println("[DEBUG] staticWg.Wait() returned")
+	}
+
 	log.Println("[*] Starting ServiceEnumeration")
 	parseWg, enumWg := wr.ServiceEnumeration(project)
 	enumWg.Wait()
+
 	parseWg.Wait()
 
 	close(wr.fullScan)
 
 	log.Println("[*] Starting PrimaryScanners")
-	primaryWg := wr.PrimaryScanners(project)
+	primaryWg := wr.PrimaryScanners(project, wr.templateWorkers)
 	if primaryWg != nil {
 		primaryWg.Wait()
 		log.Println("[DEBUG] primaryWg.Wait() returned")
@@ -116,7 +125,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 	return parseWg, enumWg
 }
 
-func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.WaitGroup {
+func (wr *wranglerRepository) PrimaryScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
 	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
 		log.Printf("[!] Unable to load scans: %s", err)
@@ -134,26 +143,7 @@ func (wr *wranglerRepository) PrimaryScanners(project *models.Project) *sync.Wai
 		return &wg
 	}
 
-	log.Printf("[*] Loaded %d primary scans from YAML", len(args))
-
-	var workers []models.Worker
-	for i, pattern := range args {
-		w := models.Worker{
-			ID:             i,
-			Type:           pattern.Tool,
-			Command:        pattern.Tool,
-			Args:           pattern.Args,
-			Protocol:       pattern.Protocol,
-			Description:    pattern.Description,
-			UserCommand:    make(chan string, 1),
-			WorkerResponse: make(chan string, 1),
-			ErrorChan:      make(chan error, 1),
-			XMLPathsChan:   make(chan string, 1),
-		}
-		workers = append(workers, w)
-	}
-
-	log.Printf("[*] Initialized %d workers", len(workers))
+	log.Printf("[*] Starting %d workers", len(workers))
 
 	wg := wr.startWorkers(project, workers, wr.fullScan, batchSize)
 	if wg == nil {

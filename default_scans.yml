@@ -1,12 +1,6 @@
 scan-collection:
   - scan-item:
       tool: "nmap"
-      args: [ "-sS" ]
-      protocol: "tcp"
-      description: "Debugging_scan_test_random_open_port"
-
-  - scan-item:
-      tool: "nmap"
       args: [ "-sT", "-p", "3389" ]
       protocol: "tcp"
       description: "Debugging_scan_test_hardcoded_port"
