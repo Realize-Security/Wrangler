@@ -23,6 +23,7 @@ var (
 	excludeFile = "out_of_scope.txt"
 	nonRootUser = ""
 	batchSize   = 200
+	allUpHosts  []string
 
 	// Channels & global vars
 	sigCh = make(chan os.Signal, 1)
