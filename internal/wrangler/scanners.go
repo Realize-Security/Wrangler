@@ -16,7 +16,7 @@ func (wr *wranglerRepository) startScanProcess(
 	inScope []string,
 	exclude string,
 ) {
-	var discoveryDone chan struct{}
+	//var discoveryDone chan struct{}
 
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
 	if err != nil {
@@ -30,40 +30,56 @@ func (wr *wranglerRepository) startScanProcess(
 		}
 	}(tempDir)
 
+	// Step 1: Run host discovery and block until complete
 	if wr.cli.RunDiscovery {
 		log.Println("[*] Starting discovery")
-		wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
+		discoveryWg := wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
+		if discoveryWg != nil {
+			log.Println("[DEBUG] Waiting for discovery to complete")
+			discoveryWg.Wait()
+			log.Println("[DEBUG] Discovery complete")
+		}
 	} else {
 		log.Println("[*] Skipping discovery")
 		close(wr.serviceEnum)
-		discoveryDone = make(chan struct{})
-		close(discoveryDone)
 	}
 
-	log.Println("[*] Starting static worker templates")
-	staticWg := wr.PrimaryScanners(project, wr.staticWorkers)
-	if staticWg != nil {
-		log.Println("[DEBUG] staticWg.Wait() starting")
-		staticWg.Wait()
-		log.Println("[DEBUG] staticWg.Wait() returned")
-	}
+	// Step 2: Start static workers and service enumeration concurrently in goroutines
+	var staticWg *sync.WaitGroup
+	go func() {
+		log.Println("[*] Starting static worker templates")
+		staticWg = wr.PrimaryScanners(project, wr.staticWorkers)
+		if staticWg != nil {
+			log.Println("[DEBUG] Waiting for static workers to complete")
+			staticWg.Wait()
+			log.Println("[DEBUG] Static workers complete")
+		}
+	}()
 
 	log.Println("[*] Starting ServiceEnumeration")
 	parseWg, enumWg := wr.ServiceEnumeration(project)
-	enumWg.Wait()
 
-	parseWg.Wait()
+	// Step 3: Start primary scanners after service enumeration in a goroutine
+	primaryDone := make(chan struct{})
+	go func() {
+		log.Println("[DEBUG] Waiting for service enumeration to complete")
+		enumWg.Wait()
+		parseWg.Wait()
+		log.Println("[*] Service enumeration complete, closing fullScan channel")
+		close(wr.fullScan)
 
-	close(wr.fullScan)
+		log.Println("[*] Starting template-based PrimaryScanners")
+		primaryWg := wr.PrimaryScanners(project, wr.templateWorkers)
+		if primaryWg != nil {
+			log.Println("[DEBUG] Waiting for primary scanners to complete")
+			primaryWg.Wait()
+			log.Println("[DEBUG] Primary scanners complete")
+		}
+		close(primaryDone)
+	}()
 
-	log.Println("[*] Starting PrimaryScanners")
-	primaryWg := wr.PrimaryScanners(project, wr.templateWorkers)
-	if primaryWg != nil {
-		primaryWg.Wait()
-		log.Println("[DEBUG] primaryWg.Wait() returned")
-	}
-
-	log.Println("[*] All scanning steps complete. Shutting down.")
+	// Main goroutine returns immediately, not blocking
+	log.Println("[*] Scanning initiated, running in background")
 }
 
 func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync.WaitGroup, *sync.WaitGroup) {

@@ -34,9 +34,9 @@ type WranglerRepository interface {
 	NewProject() *models.Project
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
-	DiscoveryScan(workers []models.Worker, exclude string)
+	DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup)
 	startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup
-	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
+	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project) *sync.WaitGroup
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
