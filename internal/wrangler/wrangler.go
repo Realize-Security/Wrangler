@@ -74,10 +74,8 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	go teeTargets(serviceEnumSource, serviceEnumMain, serviceEnumBroadcast)
 	go teeTargets(fullScanSource, fullScanMain, fullScanBroadcast)
 
-	// Signal handling (unchanged)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 
-	// Return the repository with all channels
 	return &wranglerRepository{
 		cli:           cli,
 		serviceEnum:   serviceEnumMain,
@@ -86,6 +84,8 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanBroadcast),
 	}
 }
+
+// teeTargets ensures channel propagation
 func teeTargets(in <-chan models.Target, out1, out2 chan<- models.Target) {
 	for t := range in {
 		out1 <- t
