@@ -64,6 +64,12 @@ func (a *Add) TopPorts(value int) *Add {
 	return a
 }
 
+// AllPorts sets the -p- argument
+func (a *Add) AllPorts() *Add {
+	a.cmd.Args["-p-"] = ""
+	return a
+}
+
 // MinHostGroup sets the min-hostgroup argument
 func (a *Add) MinHostGroup(value int) *Add {
 	a.cmd.Args["--min-hostgroup"] = strconv.Itoa(value)
