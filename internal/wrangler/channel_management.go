@@ -15,6 +15,44 @@ import (
 	"time"
 )
 
+// DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
+// If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
+	var wg sync.WaitGroup
+	wg.Add(len(workers))
+	done := make(chan struct{})
+
+	for _, w := range workers {
+		w := w
+		go func() {
+			defer wg.Done()
+			for resp := range w.WorkerResponse {
+				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
+				if strings.Contains(resp, "Host is up (") {
+					hosts := getUpHosts(resp)
+					for _, host := range hosts {
+						if host != "" {
+							log.Printf("[*] Found live host: %s", hosts)
+							wr.serviceEnum <- models.Target{Host: host}
+							allUpHosts = append(allUpHosts, host)
+						} else {
+							// If we've hit an empty string, the rest of the []string is presumed empty
+							break
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(wr.serviceEnum)
+		log.Println("[*] All responses monitored, service enumeration channel closed.")
+		close(done)
+	}()
+}
+
 // MonitorServiceEnum parses each Nmap XML from
 // the service-enumeration stage & pushes open hosts/ports
 // onto `fullScan` channel immediately.
@@ -78,43 +116,6 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 		}(w)
 	}
 	return &wg
-}
-
-// DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
-// If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
-	var wg sync.WaitGroup
-	wg.Add(len(workers))
-	done := make(chan struct{})
-
-	for _, w := range workers {
-		w := w
-		go func() {
-			defer wg.Done()
-			for resp := range w.WorkerResponse {
-				log.Printf("Worker %d: Received %d bytes of response", w.ID, len(resp))
-				if strings.Contains(resp, "Host is up (") {
-					hosts := getUpHosts(resp)
-					for _, host := range hosts {
-						if host != "" {
-							wr.serviceEnum <- models.Target{Host: host}
-							log.Printf("[*] Found live host: %s", hosts)
-						} else {
-							// If we've hit an empty string, the rest of the []string is presumed empty
-							break
-						}
-					}
-				}
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(wr.serviceEnum)
-		log.Println("[*] All responses monitored, service enumeration channel closed.")
-		close(done)
-	}()
 }
 
 // getUpHosts extract IPv4 addresses from Nmap stdout
