@@ -25,10 +25,10 @@ scan-collection:
       protocol: "both"
 
   - scan-item:
-      description: "UDP SNMP all scripts"
+      description: "UDP SNMP all except brute on default 161"
       service: "snmp"
       tool: "nmap"
-      args: [ "-sU", "--script", "snmp-*" ]
+      args: [ "-sU", "--script", "snmp-* and not snmp-brute.nse", "-p", "161" ]
       protocol: "udp"
 
   - scan-item:
@@ -38,21 +38,27 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
+        description: "TCP all ports for SSH all except algos"
+        tool: "nmap"
+        args: [ "-sT", "--script", "ssh-* and not (ssh2-enum-algos or ssh-brute)" ]
+        protocol: "tcp"
+
+  - scan-item:
       description: "TCP FTP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "ftp-*" ]
+      args: [ "-sT", "--script", "ftp-* and not ftp-brute" ]
       protocol: "tcp"
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "rdp-*" ]
+      args: [ "-sT", "--script", "rdp-enum-encryption,rdp-ntlm-info" ]
       protocol: "tcp"
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "smb-*" ]
+      args: [ "-sT", "--script", "smb-* and not smb-brute.nse" ]
       protocol: "tcp"
 
   - scan-item:
