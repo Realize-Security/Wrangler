@@ -110,17 +110,17 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 	// Configure TCP command
 	tcpCmd := nmap.NewCommand(nmap.TCP, "-p-", nil)
 	tcpCmd.Add().
-		MinHostGroup("100").
-		MinRate("150").
-		MaxRetries("2")
+		MinHostGroup(100).
+		MinRate(150).
+		MaxRetries(2)
 
 	// Configure UDP command
 	udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
 	udpCmd.Add().
-		MinHostGroup("100").
-		MinRate("150").
-		MaxRetries("2").
-		TopPorts("1000")
+		MinHostGroup(100).
+		MinRate(150).
+		MaxRetries(2).
+		TopPorts(1000)
 
 	// Assign arguments to workers
 	wTCP.Args = tcpCmd.ToArgList()
