@@ -41,7 +41,7 @@ type WranglerRepository interface {
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	PrimaryScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup
+	TemplateScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup
 	GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target]
 	GetFullScanBroadcast() *TypedBroadcastChannel[models.Target]
 }

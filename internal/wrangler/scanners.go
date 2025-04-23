@@ -4,7 +4,6 @@ import (
 	"Wrangler/internal/files"
 	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
-	"Wrangler/pkg/serializers"
 	"fmt"
 	"log"
 	"os"
@@ -16,8 +15,6 @@ func (wr *wranglerRepository) startScanProcess(
 	inScope []string,
 	exclude string,
 ) {
-	//var discoveryDone chan struct{}
-
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
 	if err != nil {
 		fmt.Printf("unable to create temp scope file directory: %s", err)
@@ -31,24 +28,19 @@ func (wr *wranglerRepository) startScanProcess(
 	}(tempDir)
 
 	// Step 1: Run host discovery and block until complete
-	if wr.cli.RunDiscovery {
-		log.Println("[*] Starting discovery")
-		discoveryWg := wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
-		if discoveryWg != nil {
-			log.Println("[DEBUG] Waiting for discovery to complete")
-			discoveryWg.Wait()
-			log.Println("[DEBUG] Discovery complete")
-		}
-	} else {
-		log.Println("[*] Skipping discovery")
-		close(wr.serviceEnum)
+	log.Println("[*] Starting discovery")
+	discoveryWg := wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
+	if discoveryWg != nil {
+		log.Println("[DEBUG] Waiting for discovery to complete")
+		discoveryWg.Wait()
+		log.Println("[DEBUG] Discovery complete")
 	}
 
 	// Step 2: Start static workers and service enumeration concurrently in goroutines
 	var staticWg *sync.WaitGroup
 	go func() {
 		log.Println("[*] Starting static worker templates")
-		staticWg = wr.PrimaryScanners(project, wr.staticWorkers)
+		staticWg = wr.StaticScanners(project, wr.staticWorkers)
 		if staticWg != nil {
 			log.Println("[DEBUG] Waiting for static workers to complete")
 			staticWg.Wait()
@@ -68,8 +60,8 @@ func (wr *wranglerRepository) startScanProcess(
 		log.Println("[*] Service enumeration complete, closing fullScan channel")
 		close(wr.fullScan)
 
-		log.Println("[*] Starting template-based PrimaryScanners")
-		primaryWg := wr.PrimaryScanners(project, wr.templateWorkers)
+		log.Println("[*] Starting template-based TemplateScanners")
+		primaryWg := wr.TemplateScanners(project, wr.templateWorkers)
 		if primaryWg != nil {
 			log.Println("[DEBUG] Waiting for primary scanners to complete")
 			primaryWg.Wait()
@@ -141,15 +133,36 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync
 	return parseWg, enumWg
 }
 
-func (wr *wranglerRepository) PrimaryScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
-	args, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
-	if err != nil {
-		log.Printf("[!] Unable to load scans: %s", err)
+func (wr *wranglerRepository) StaticScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
+	if len(allUpHosts) > 0 {
+		log.Printf("[*] Starting %d static workers", len(workers))
+	} else {
+		log.Print("[!] No hosts discovered")
 		return nil
 	}
 
-	if len(args) == 0 {
-		log.Println("[!] No scan patterns in YAML, skipping")
+	ch := make(chan models.Target, len(allUpHosts))
+	for _, host := range allUpHosts {
+		ch <- models.Target{Host: host}
+	}
+
+	wg := wr.startWorkers(project, workers, ch, batchSize)
+	if wg == nil {
+		log.Println("[!] No workers returned for primary scanners")
+		return &sync.WaitGroup{}
+	}
+
+	wr.SetupSignalHandler(workers, sigCh)
+	wr.DrainWorkerErrors(workers, errCh)
+	wr.ListenToWorkerErrors(workers, errCh)
+
+	log.Println("[*] Primary scanners running")
+	return wg
+}
+
+func (wr *wranglerRepository) TemplateScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
+	if len(workers) == 0 {
+		log.Println("[!] No workers, skipping")
 		var wg sync.WaitGroup
 		go func() {
 			for t := range wr.fullScan {

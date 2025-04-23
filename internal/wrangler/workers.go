@@ -20,12 +20,7 @@ import (
 )
 
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-func (wr *wranglerRepository) startWorkers(
-	project *models.Project,
-	workers []models.Worker,
-	inChan <-chan models.Target,
-	batchSize int,
-) *sync.WaitGroup {
+func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	if len(workers) == 0 {
 		// Drain any incoming targets so we don't block upstream
@@ -98,42 +93,61 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		return
 	}
 
-	tcpPorts := getUniquePortsForTargets(batch, nmap.TCP)
+	var udp []string
 	var tcp []string
+
+	tcpPorts := getUniquePortsForTargets(batch, nmap.TCP)
 	if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
 		fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
-		tcp = []string{"-p-"}
-	} else {
-		tcp = []string{strings.Join(tcpPorts, ",")}
+		cmd := nmap.NewCommand("", "", nil)
+		cmd.Add().AllPorts()
+		tcp = cmd.ToArgList()
+	} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
+		t := "T:" + strings.Join(tcpPorts, ",")
+		tcp = []string{t}
+		appendPorts(tcp, udp, w)
 	}
 
 	udpPorts := getUniquePortsForTargets(batch, nmap.UDP)
-	var udp []string
 	if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
 		fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
 		cmd := nmap.NewCommand("", "", nil)
 		cmd.Add().TopPorts(1000)
 		udp = cmd.ToArgList()
-	} else {
-		tcp = []string{strings.Join(udpPorts, ",")}
-	}
-
-	if len(tcp) > 0 {
-		w.Args = append(w.Args, tcp...)
-	}
-
-	if len(udp) > 0 {
-		w.Args = append(w.Args, udp...)
+	} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
+		u := "U:" + strings.Join(udpPorts, ",")
+		udp = []string{u}
+		appendPorts(tcp, udp, w)
 	}
 }
 
 func portsAreHardcoded(worker *models.Worker) bool {
 	for _, arg := range worker.Args {
-		if arg == "-p" || arg == "-p-" || arg == "--top-ports" {
+		if strings.HasPrefix(arg, "-p") || arg == "-p-" || arg == "--top-ports" {
 			return true
 		}
 	}
 	return false
+}
+
+func appendPorts(tcp, udp []string, w *models.Worker) {
+	if len(tcp) > 0 && len(udp) > 0 {
+		t := strings.Join(tcp, ",")
+		u := strings.Join(udp, ",")
+		joined := strings.Join([]string{t, u}, ",")
+		joined = "-p " + joined
+		w.Args = append(w.Args, joined)
+
+	} else if len(tcp) > 0 && len(udp) == 0 {
+		t := strings.Join(tcp, ",")
+		t = "-p " + t
+		w.Args = append(w.Args, t)
+
+	} else if len(udp) > 0 && len(tcp) == 0 {
+		u := strings.Join(udp, ",")
+		u = "-p " + u
+		w.Args = append(w.Args, u)
+	}
 }
 
 func getUniquePortsForTargets(batch []models.Target, protocol string) []string {
