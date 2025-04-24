@@ -23,13 +23,17 @@ func main() {
 		}),
 	)
 
+	if cli.BatchSize <= 0 {
+		cli.BatchSize = 200
+	}
+
 	wr := wrangler.NewWranglerRepository(cli)
 	project = wr.NewProject()
 	serviceEnumBC := wr.GetServiceEnumBroadcast()
 	fullScanBC := wr.GetFullScanBroadcast()
 
 	// Create monitoring subscription for service enumeration
-	serviceEnumMonitor := serviceEnumBC.Subscribe(100)
+	serviceEnumMonitor := serviceEnumBC.Subscribe(cli.BatchSize)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -37,7 +41,7 @@ func main() {
 		monitorServiceEnum(serviceEnumMonitor)
 	}()
 
-	fullScanMonitor := fullScanBC.Subscribe(100)
+	fullScanMonitor := fullScanBC.Subscribe(cli.BatchSize)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -50,14 +54,18 @@ func main() {
 
 // monitorServiceEnum logs targets from the service enumeration channel
 func monitorServiceEnum(ch <-chan models.Target) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[SERVICE-ENUM-MONITOR] Recovered from panic: %v", r)
+		}
+	}()
+
 	log.Println("Starting service enumeration monitor...")
 	targetCount := 0
-
 	for target := range ch {
 		targetCount++
 		log.Printf("[SERVICE-ENUM-MONITOR] Found target: %s", target.Host)
 	}
-
 	log.Printf("[SERVICE-ENUM-MONITOR] Finished monitoring with %d targets", targetCount)
 }
 
