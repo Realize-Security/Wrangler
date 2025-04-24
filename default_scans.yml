@@ -1,15 +1,9 @@
 scan-collection:
   - scan-item:
       tool: "nmap"
-      args: [ "-sS" ]
+      args: [ "--script", "vuln and not smb-vuln-*" ]
       protocol: "tcp"
-      description: "Debugging_scan_test_random_open_port"
-
-  - scan-item:
-      tool: "nmap"
-      args: [ "-sT", "-p", "3389" ]
-      protocol: "tcp"
-      description: "Debugging_scan_test_hardcoded_port"
+      description: "All nmap vuln scanning scripts except SMB"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
@@ -25,16 +19,22 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
+      description: "TCP all ports - All SSL scripts"
+      tool: "nmap"
+      args: [ "-sT", "--script", "(ssl-* and sslv2-*) and not ssl-enum-ciphers" ]
+      protocol: "tcp"
+
+  - scan-item:
       description: "TCP UDP common admin interfaces"
       tool: "nmap"
       args: [ "-sTUV", "-p", "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"]
       protocol: "both"
 
   - scan-item:
-      description: "UDP SNMP all scripts"
+      description: "UDP SNMP all except brute on default 161"
       service: "snmp"
       tool: "nmap"
-      args: [ "-sU", "--script", "snmp-*" ]
+      args: [ "-sU", "--script", "snmp-* and not snmp-brute.nse", "-p", "161" ]
       protocol: "udp"
 
   - scan-item:
@@ -44,9 +44,15 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
+        description: "TCP all ports for SSH all except algos"
+        tool: "nmap"
+        args: [ "-sT", "--script", "ssh-* and not (ssh2-enum-algos or ssh-brute)" ]
+        protocol: "tcp"
+
+  - scan-item:
       description: "TCP FTP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "ftp-*" ]
+      args: [ "-sT", "--script", "ftp-* and not ftp-brute" ]
       protocol: "tcp"
 
   - scan-item:
@@ -58,7 +64,7 @@ scan-collection:
   - scan-item:
       description: "TCP SMB scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "smb-*" ]
+      args: [ "-sT", "--script", "smb-* and not smb-brute.nse" ]
       protocol: "tcp"
 
   - scan-item:

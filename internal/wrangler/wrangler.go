@@ -3,6 +3,7 @@ package wrangler
 import (
 	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
+	"Wrangler/pkg/serializers"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +23,7 @@ var (
 	excludeFile = "out_of_scope.txt"
 	nonRootUser = ""
 	batchSize   = 200
+	allUpHosts  []string
 
 	// Channels & global vars
 	sigCh = make(chan os.Signal, 1)
@@ -33,24 +35,26 @@ type WranglerRepository interface {
 	NewProject() *models.Project
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
-	DiscoveryScan(workers []models.Worker, exclude string)
+	DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup)
 	startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup
-	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
+	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project) *sync.WaitGroup
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	PrimaryScanners(project *models.Project) *sync.WaitGroup
+	TemplateScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup
 	GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target]
 	GetFullScanBroadcast() *TypedBroadcastChannel[models.Target]
 }
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli           models.CLI
-	serviceEnum   chan models.Target
-	fullScan      chan models.Target
-	serviceEnumBC *TypedBroadcastChannel[models.Target]
-	fullScanBC    *TypedBroadcastChannel[models.Target]
+	cli             models.CLI
+	serviceEnum     chan models.Target
+	fullScan        chan models.Target
+	serviceEnumBC   *TypedBroadcastChannel[models.Target]
+	fullScanBC      *TypedBroadcastChannel[models.Target]
+	staticWorkers   []models.Worker
+	templateWorkers []models.Worker
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
@@ -71,10 +75,8 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	go teeTargets(serviceEnumSource, serviceEnumMain, serviceEnumBroadcast)
 	go teeTargets(fullScanSource, fullScanMain, fullScanBroadcast)
 
-	// Signal handling (unchanged)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 
-	// Return the repository with all channels
 	return &wranglerRepository{
 		cli:           cli,
 		serviceEnum:   serviceEnumMain,
@@ -83,6 +85,8 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanBroadcast),
 	}
 }
+
+// teeTargets ensures channel propagation
 func teeTargets(in <-chan models.Target, out1, out2 chan<- models.Target) {
 	for t := range in {
 		out1 <- t
@@ -191,5 +195,49 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		wr.serviceEnum = make(chan models.Target, len(inScope))
 	}
 
+	wr.loadWorkers()
 	wr.startScanProcess(project, inScope, exclude)
+}
+
+func (wr *wranglerRepository) loadWorkers() {
+	static := make([]models.Worker, 0)
+	templated := make([]models.Worker, 0)
+	scans, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+	if err != nil {
+		log.Printf("[!] Unable to load scans: %s", err)
+		panic(err.Error())
+	}
+
+	log.Printf("[*] Loaded %d scans from YAML", len(scans))
+
+	var workers []models.Worker
+	for i, pattern := range scans {
+		w := models.Worker{
+			ID:             i,
+			Type:           pattern.Tool,
+			Command:        pattern.Tool,
+			Args:           pattern.Args,
+			Protocol:       pattern.Protocol,
+			Description:    pattern.Description,
+			UserCommand:    make(chan string, 1),
+			WorkerResponse: make(chan string, 1),
+			ErrorChan:      make(chan error, 1),
+			XMLPathsChan:   make(chan string, 1),
+		}
+		workers = append(workers, w)
+	}
+
+	for _, worker := range workers {
+		if portsAreHardcoded(&worker) {
+			static = append(static, worker)
+		} else {
+			templated = append(templated, worker)
+		}
+	}
+
+	wr.staticWorkers = static
+	wr.templateWorkers = templated
+
+	log.Printf("[*] Loaded %d static workers", len(static))
+	log.Printf("[*] Loaded %d templated workers", len(templated))
 }

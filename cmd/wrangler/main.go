@@ -88,7 +88,7 @@ Examples:
   ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --output=report_dir --scan-patterns=default_scans.yml
   ./wrangler --project-name=my_scan --scope=ip_addresses.txt,ip_addresses2.txt --non-root-user=analyst --output=report_dir --scan-patterns=default_scans.yml
   ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --exclude=exclude_ips.txt --output=report_dir --batch-size=100 --scan-patterns=custom_scans.yml
-  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --discover --debug-workers
+  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --debug-workers
 
 Options:
   --project-name      Name for the project (required)
@@ -98,7 +98,6 @@ Options:
   --output           Output folder (defaults to stdout)
   --scan-patterns    YML file containing scan patterns
   --batch-size       Number of hosts to add to Nmap batches
-  --discover         Run ICMP and port knocking checks to establish host availability
   --debug-workers    Add print statements for worker output
 
 Notes:

@@ -59,14 +59,20 @@ func (c *Command) Add() *Add {
 }
 
 // TopPorts sets the top-ports argument
-func (a *Add) TopPorts(value string) *Add {
-	a.cmd.Args["--top-ports"] = value
+func (a *Add) TopPorts(value int) *Add {
+	a.cmd.Args["--top-ports"] = strconv.Itoa(value)
+	return a
+}
+
+// AllPorts sets the -p- argument
+func (a *Add) AllPorts() *Add {
+	a.cmd.Args["-p-"] = ""
 	return a
 }
 
 // MinHostGroup sets the min-hostgroup argument
-func (a *Add) MinHostGroup(value string) *Add {
-	a.cmd.Args["--min-hostgroup"] = value
+func (a *Add) MinHostGroup(value int) *Add {
+	a.cmd.Args["--min-hostgroup"] = strconv.Itoa(value)
 	return a
 }
 
@@ -77,8 +83,8 @@ func (a *Add) MinRTTTimeout(value string) *Add {
 }
 
 // MaxRetries sets the max-retries argument
-func (a *Add) MaxRetries(value string) *Add {
-	a.cmd.Args["--max-retries"] = value
+func (a *Add) MaxRetries(value int) *Add {
+	a.cmd.Args["--max-retries"] = strconv.Itoa(value)
 	return a
 }
 
@@ -95,8 +101,8 @@ func (a *Add) ScriptTimeout(value string) *Add {
 }
 
 // MinRate sets the min-rate argument
-func (a *Add) MinRate(value string) *Add {
-	a.cmd.Args["--min-rate"] = value
+func (a *Add) MinRate(value int) *Add {
+	a.cmd.Args["--min-rate"] = strconv.Itoa(value)
 	return a
 }
 

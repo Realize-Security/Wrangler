@@ -13,17 +13,17 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) *sync.WaitGroup {
 	var workers []models.Worker
+	var wg sync.WaitGroup
 
 	for i, chunk := range chunkSlice(inScope, batchSize) {
 		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
-			return
+			return nil
 		}
 
-		// Configure TCP command
 		cmd := nmap.NewCommand("-sn", "-p-", nil)
 		cmd.Add().
 			Custom("-PS22,80,443,3389", "").
@@ -40,7 +40,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		args := cmd.ToArgList()
 
 		workers = append(workers, models.Worker{
-			ID:             0,
+			ID:             i,
 			Type:           "nmap",
 			Command:        "nmap",
 			Args:           args,
@@ -51,19 +51,20 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		})
 	}
 
-	wr.DiscoveryResponseMonitor(workers)
-	wr.DiscoveryScan(workers, excludeFile)
+	wg.Add(len(workers))
 
+	wr.DiscoveryScan(workers, excludeFile, &wg)
+
+	wr.DiscoveryResponseMonitor(workers)
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
+
+	return &wg
 }
 
-// DiscoveryScan spawns an Nmap -sn job per host. Returns a WaitGroup.
-func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string) {
-	var wg sync.WaitGroup
+func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup) {
 	for i := range workers {
-		wg.Add(1)
 		w := &workers[i]
 		w.Command = "nmap"
 		if exclude != "" {
