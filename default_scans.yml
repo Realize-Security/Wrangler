@@ -1,9 +1,9 @@
 scan-collection:
   - scan-item:
       tool: "nmap"
-      args: [ "-sT", "-p", "3389" ]
+      args: [ "--script", "vuln and not smb-vuln-*" ]
       protocol: "tcp"
-      description: "Debugging_scan_test_hardcoded_port"
+      description: "All nmap vuln scanning scripts except SMB"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
@@ -16,6 +16,12 @@ scan-collection:
       description: "TCP all ports SSL ciphers"
       tool: "nmap"
       args: [ "-sT", "--script", "ssl-enum-ciphers" ]
+      protocol: "tcp"
+
+  - scan-item:
+      description: "TCP all ports - All SSL scripts"
+      tool: "nmap"
+      args: [ "-sT", "--script", "(ssl-* and sslv2-*) and not ssl-enum-ciphers" ]
       protocol: "tcp"
 
   - scan-item:
@@ -52,7 +58,7 @@ scan-collection:
   - scan-item:
       description: "TCP RDP scripts on all ports"
       tool: "nmap"
-      args: [ "-sT", "--script", "rdp-enum-encryption,rdp-ntlm-info" ]
+      args: [ "-sT", "--script", "rdp-*" ]
       protocol: "tcp"
 
   - scan-item:
