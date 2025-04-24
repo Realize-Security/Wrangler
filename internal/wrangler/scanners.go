@@ -36,24 +36,24 @@ func (wr *wranglerRepository) startScanProcess(
 		log.Println("[DEBUG] Discovery complete")
 	}
 
-	// Step 2: Start static workers and service enumeration concurrently in goroutines
-	var staticWg *sync.WaitGroup
+	// Step 2: Start static workers AFTER discovery is complete to use allUpHosts
+	log.Println("[*] Starting static worker templates")
+	staticWg := wr.StaticScanners(project, wr.staticWorkers)
+
+	// Step 3: Start service enumeration
+	log.Println("[*] Starting ServiceEnumeration")
+	parseWg, enumWg := wr.ServiceEnumeration(project)
+
+	// Step 4: Start primary scanners after service enumeration in a goroutine
+	primaryDone := make(chan struct{})
 	go func() {
-		log.Println("[*] Starting static worker templates")
-		staticWg = wr.StaticScanners(project, wr.staticWorkers)
+		// Wait for static scanners to complete
 		if staticWg != nil {
 			log.Println("[DEBUG] Waiting for static workers to complete")
 			staticWg.Wait()
 			log.Println("[DEBUG] Static workers complete")
 		}
-	}()
 
-	log.Println("[*] Starting ServiceEnumeration")
-	parseWg, enumWg := wr.ServiceEnumeration(project)
-
-	// Step 3: Start primary scanners after service enumeration in a goroutine
-	primaryDone := make(chan struct{})
-	go func() {
 		log.Println("[DEBUG] Waiting for service enumeration to complete")
 		enumWg.Wait()
 		parseWg.Wait()
