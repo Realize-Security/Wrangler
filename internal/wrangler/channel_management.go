@@ -162,6 +162,7 @@ func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 			select {
 			case w.UserCommand <- WorkerStop:
 				log.Printf("Sent STOP to worker %d", w.ID)
+				wr.Cleanup()
 			case <-time.After(1 * time.Second):
 				log.Printf("Timeout sending STOP to worker %d", w.ID)
 			}
@@ -195,7 +196,8 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 	// close error chan so any downstream listener won't block forever.
 	go func() {
 		wg.Wait()
-		close(errCh)
+		wr.Cleanup()
+		//close(errCh)
 	}()
 }
 

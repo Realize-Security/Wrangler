@@ -63,11 +63,13 @@ func (wr *wranglerRepository) startScanProcess(
 		log.Println("[*] Starting template-based TemplateScanners")
 		primaryWg := wr.TemplateScanners(project, wr.templateWorkers)
 		if primaryWg != nil {
-			log.Println("[DEBUG] Waiting for primary scanners to complete")
+			log.Println("[DEBUG] Waiting for template scanners to complete")
 			primaryWg.Wait()
-			log.Println("[DEBUG] Primary scanners complete")
+			log.Println("[DEBUG] Template scanners complete")
 		}
+		wr.Cleanup()
 		close(primaryDone)
+
 	}()
 
 	// Main goroutine returns immediately, not blocking

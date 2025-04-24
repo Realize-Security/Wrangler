@@ -104,8 +104,20 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 
 // forwardChannel Helper function to forward messages from a read-only channel to a bidirectional channel
 func forwardChannel(in <-chan models.Target, out chan models.Target) {
+	defer func() {
+		// Recover from panic if channel is closed
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in forwardChannel: %v", r)
+		}
+	}()
+
 	for t := range in {
-		out <- t
+		select {
+		case out <- t:
+		default:
+			log.Println("Warning: Unable to forward message, channel might be closed")
+			return
+		}
 	}
 	close(out)
 }
