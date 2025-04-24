@@ -21,7 +21,7 @@ scan-collection:
   - scan-item:
       description: "TCP all ports - All SSL scripts"
       tool: "nmap"
-      args: [ "-sT", "--script", "(ssl-* and sslv2-*) and not ssl-enum-ciphers" ]
+      args: [ "-sT", "--script", "ssl-*,sslv2-* and not ssl-enum-ciphers" ]
       protocol: "tcp"
 
   - scan-item:

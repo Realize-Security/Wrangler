@@ -48,50 +48,66 @@ type WranglerRepository interface {
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli             models.CLI
-	serviceEnum     chan models.Target
-	fullScan        chan models.Target
-	serviceEnumBC   *TypedBroadcastChannel[models.Target]
-	fullScanBC      *TypedBroadcastChannel[models.Target]
-	staticWorkers   []models.Worker
-	templateWorkers []models.Worker
+	cli               models.CLI
+	serviceEnum       chan models.Target // Keep as bidirectional for compatibility
+	fullScan          chan models.Target // Keep as bidirectional for compatibility
+	serviceEnumBC     *TypedBroadcastChannel[models.Target]
+	fullScanBC        *TypedBroadcastChannel[models.Target]
+	staticWorkers     []models.Worker
+	templateWorkers   []models.Worker
+	serviceEnumSource chan models.Target // For DiscoveryResponseMonitor
+	fullScanSource    chan models.Target // For MonitorServiceEnum
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
-	// Source channels for incoming targets
-	serviceEnumSource := make(chan models.Target, batchSize)
-	fullScanSource := make(chan models.Target, batchSize)
+	// Buffer size for channels
+	bufferSize := batchSize
+	if cli.BatchSize > 0 {
+		bufferSize = cli.BatchSize
+	}
 
-	// Main pipeline channels
-	serviceEnumMain := make(chan models.Target, batchSize)
-	fullScanMain := make(chan models.Target, batchSize)
+	// Create source channels for direct writing
+	serviceEnumSource := make(chan models.Target, bufferSize)
+	fullScanSource := make(chan models.Target, bufferSize)
 
-	// Broadcast channels
-	serviceEnumBroadcast := make(chan models.Target, batchSize)
-	fullScanBroadcast := make(chan models.Target, batchSize)
+	// Create worker channels that will receive from broadcasts
+	serviceEnumMain := make(chan models.Target, bufferSize)
+	fullScanMain := make(chan models.Target, bufferSize)
 
-	// tee goroutines
-	go teeTargets(serviceEnumSource, serviceEnumMain, serviceEnumBroadcast)
-	go teeTargets(fullScanSource, fullScanMain, fullScanBroadcast)
+	// Create broadcast channels from source channels
+	serviceEnumBC := NewTypedBroadcastChannel[models.Target](serviceEnumSource)
+	fullScanBC := NewTypedBroadcastChannel[models.Target](fullScanSource)
+
+	// Subscribe the worker channels to the broadcast
+	subscribedServiceEnum := serviceEnumBC.Subscribe(bufferSize)
+	subscribedFullScan := fullScanBC.Subscribe(bufferSize)
+
+	// Forward from subscriptions to worker channels
+	go forwardChannel(subscribedServiceEnum, serviceEnumMain)
+	go forwardChannel(subscribedFullScan, fullScanMain)
 
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 
 	return &wranglerRepository{
-		cli:           cli,
-		serviceEnum:   serviceEnumMain,
-		fullScan:      fullScanMain,
-		serviceEnumBC: NewTypedBroadcastChannel[models.Target](serviceEnumBroadcast),
-		fullScanBC:    NewTypedBroadcastChannel[models.Target](fullScanBroadcast),
+		cli:               cli,
+		serviceEnum:       serviceEnumMain,   // Workers use this
+		fullScan:          fullScanMain,      // Workers use this
+		serviceEnumBC:     serviceEnumBC,     // External monitoring uses this
+		fullScanBC:        fullScanBC,        // External monitoring uses this
+		staticWorkers:     nil,               // Will be initialized in loadWorkers
+		templateWorkers:   nil,               // Will be initialized in loadWorkers
+		serviceEnumSource: serviceEnumSource, // Discovery monitor writes to this
+		fullScanSource:    fullScanSource,    // Service enum monitor writes to this
 	}
 }
 
-// teeTargets ensures channel propagation
-func teeTargets(in <-chan models.Target, out1, out2 chan<- models.Target) {
+// forwardChannel Helper function to forward messages from a read-only channel to a bidirectional channel
+func forwardChannel(in <-chan models.Target, out chan models.Target) {
 	for t := range in {
-		out1 <- t
-		out2 <- t
+		out <- t
 	}
+	close(out)
 }
 
 // GetServiceEnumBroadcast returns the broadcast channel for service enumeration

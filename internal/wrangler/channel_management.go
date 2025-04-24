@@ -16,8 +16,9 @@ import (
 )
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
-// If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
+// If the nmap output indicates "Host is up", we send that host to `serviceEnumSource`.
+// Returns a channel that is closed when all processing is complete.
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) <-chan struct{} {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
 	done := make(chan struct{})
@@ -33,7 +34,7 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) 
 					for _, host := range hosts {
 						if host != "" {
 							log.Printf("[*] Found live host: %s", hosts)
-							wr.serviceEnum <- models.Target{Host: host}
+							wr.serviceEnumSource <- models.Target{Host: host}
 							allUpHosts = append(allUpHosts, host)
 						} else {
 							// If we've hit an empty string, the rest of the []string is presumed empty
@@ -47,10 +48,12 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) 
 
 	go func() {
 		wg.Wait()
-		close(wr.serviceEnum)
+		close(wr.serviceEnumSource) // Close source channel, not serviceEnum
 		log.Println("[*] All responses monitored, service enumeration channel closed.")
-		close(done)
+		close(done) // Signal that processing is complete
 	}()
+
+	return done
 }
 
 // MonitorServiceEnum parses each Nmap XML from
@@ -107,7 +110,7 @@ func (wr *wranglerRepository) MonitorServiceEnum(
 							Host:  host.Addresses[0].Addr,
 							Ports: openPorts,
 						}
-						wr.fullScan <- t
+						wr.fullScanSource <- t
 						log.Printf("[*] Sent %s to fullScan", t.Host)
 					}
 				}
@@ -181,7 +184,7 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
 					errCh <- fmt.Errorf(
-						"worker %d encountered an OS error: %s, stderr: %s",
+						"worker %d encountered an error: %s, stderr: %s",
 						w.ID, workerErr.Error(), w.StdError,
 					)
 				}
