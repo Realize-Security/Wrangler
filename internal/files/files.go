@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/user"
 	"path"
-	"path/filepath"
-	"strconv"
 )
 
 const permissions = 0600
@@ -58,8 +55,6 @@ func CreateDir(path string) error {
 			return errDir
 		}
 		log.Printf("Directory created: %s\n", path)
-	} else {
-		log.Printf("Directory already exists: %s\n", path)
 	}
 	return nil
 }
@@ -76,55 +71,6 @@ func WriteFile(fullPath string, content []string) error {
 		if err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func SetFileAndDirPermsRecursive(nonRootUser, filePath string) error {
-
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return err
-	}
-
-	usr, err := user.Lookup(nonRootUser)
-	if err != nil {
-		log.Fatalf("Failed to look up user %q: %v", nonRootUser, err)
-		return err
-	}
-
-	// Convert UID/GID to integers
-	uid, err := strconv.Atoi(usr.Uid)
-	if err != nil {
-		log.Fatalf("Failed to convert UID (%s) to integer: %v", usr.Uid, err)
-		return err
-	}
-	gid, err := strconv.Atoi(usr.Gid)
-	if err != nil {
-		log.Fatalf("Failed to convert GID (%s) to integer: %v", usr.Gid, err)
-		return err
-	}
-
-	// Recursively walk the directory
-	err = filepath.Walk(filePath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		// Change ownership to the specified uid/gid.
-		if err := os.Chown(path, uid, gid); err != nil {
-			return err
-		}
-
-		err = os.Chmod(path, permissions)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("Error walking the path %q: %v", filePath, err)
-		return err
 	}
 	return nil
 }

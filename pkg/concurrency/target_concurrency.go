@@ -57,6 +57,43 @@ func (r *Registry[T]) AddAll(items []T) {
 	}
 }
 
+// ReadAndRemoveNFromRegistry reads up to n values from the registry and removes them.
+// The removed items are returned as a new slice of pointers.
+// If the registry has fewer than n elements, all available elements are returned and removed.
+func (r *Registry[T]) ReadAndRemoveNFromRegistry(n int) []*T {
+	if n <= 0 {
+		return []*T{}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Determine how many items to read
+	count := n
+	if len(r.items) < count {
+		count = len(r.items)
+	}
+
+	// If no items to read, return empty slice
+	if count == 0 {
+		return []*T{}
+	}
+
+	// Get the items to return as pointers
+	result := make([]*T, count)
+	for i := 0; i < count; i++ {
+		// Create a local copy of the item at index i
+		item := r.items[i]
+		// Store a pointer to this copy in the result slice
+		result[i] = &item
+	}
+
+	// Remove the read items from the registry
+	r.items = r.items[count:]
+
+	return result
+}
+
 // Remove removes an item from the registry
 func (r *Registry[T]) Remove(item T) bool {
 	r.mu.Lock()

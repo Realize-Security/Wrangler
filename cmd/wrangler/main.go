@@ -4,8 +4,6 @@ import (
 	"Wrangler/internal/wrangler"
 	"Wrangler/pkg/models"
 	"github.com/alecthomas/kong"
-	"log"
-	"sync"
 )
 
 var (
@@ -29,61 +27,7 @@ func main() {
 
 	wr := wrangler.NewWranglerRepository(cli)
 	project = wr.NewProject()
-	serviceEnumBC := wr.GetServiceEnumBroadcast()
-	fullScanBC := wr.GetFullScanBroadcast()
-
-	// Create monitoring subscription for service enumeration
-	serviceEnumMonitor := serviceEnumBC.Subscribe(cli.BatchSize)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		monitorServiceEnum(serviceEnumMonitor)
-	}()
-
-	fullScanMonitor := fullScanBC.Subscribe(cli.BatchSize)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		monitorFullScan(fullScanMonitor)
-	}()
-
 	wr.ProjectInit(project)
-	wg.Wait()
-}
-
-// monitorServiceEnum logs targets from the service enumeration channel
-func monitorServiceEnum(ch <-chan models.Target) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[SERVICE-ENUM-MONITOR] Recovered from panic: %v", r)
-		}
-	}()
-
-	log.Println("Starting service enumeration monitor...")
-	targetCount := 0
-	for target := range ch {
-		targetCount++
-		log.Printf("[SERVICE-ENUM-MONITOR] Found target: %s", target.Host)
-	}
-	log.Printf("[SERVICE-ENUM-MONITOR] Finished monitoring with %d targets", targetCount)
-}
-
-// monitorFullScan logs targets from the full scan channel
-func monitorFullScan(ch <-chan models.Target) {
-	log.Println("[*] Starting full scan monitor...")
-	targetCount := 0
-	portCount := 0
-
-	for target := range ch {
-		targetCount++
-		portCount += len(target.Ports)
-		log.Printf("[FULL-SCAN-MONITOR] Found target: %s with %d ports",
-			target.Host, len(target.Ports))
-	}
-
-	log.Printf("[FULL-SCAN-MONITOR] Finished monitoring with %d targets and %d ports",
-		targetCount, portCount)
 }
 
 func description() string {
@@ -93,15 +37,14 @@ Run multiple Nmap scans
 Wrangler is a command-line tool designed to automate and manage multiple Nmap scans against specified target IP addresses or fully qualified domain names (FQDNs). It allows users to define scan scopes, configure output, customize scan patterns, and control execution behavior through a variety of options. The tool is flexible, supporting single or multiple input files, customizable scan patterns via YAML configuration, and options for batch processing and debugging.
 
 Examples:
-  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --output=report_dir --scan-patterns=default_scans.yml
-  ./wrangler --project-name=my_scan --scope=ip_addresses.txt,ip_addresses2.txt --non-root-user=analyst --output=report_dir --scan-patterns=default_scans.yml
-  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --exclude=exclude_ips.txt --output=report_dir --batch-size=100 --scan-patterns=custom_scans.yml
-  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --non-root-user=analyst --debug-workers
+  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --output=report_dir --scan-patterns=default_scans.yml
+  ./wrangler --project-name=my_scan --scope=ip_addresses.txt,ip_addresses2.txt --output=report_dir --scan-patterns=default_scans.yml
+  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --exclude=exclude_ips.txt --output=report_dir --batch-size=100 --scan-patterns=default_scans.yml
+  ./wrangler --project-name=my_scan --scope=ip_addresses.txt --debug-workers
 
 Options:
   --project-name      Name for the project (required)
   --scope            Files containing target IP addresses or FQDNs (required, path)
-  --non-root-user    Non-root user who will own report files (required)
   --exclude          File listing IPs/FQDNs to exclude from scans (path)
   --output           Output folder (defaults to stdout)
   --scan-patterns    YML file containing scan patterns

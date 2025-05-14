@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"os"
@@ -17,78 +18,109 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
+// NewWorker creates a new worker with automatically generated ID and initialized channels
+func NewWorker(command string, args []string, protocol, description string) models.Worker {
+	return models.Worker{
+		ID:          uuid.Must(uuid.NewUUID()),
+		Command:     command,
+		Args:        args,
+		Protocol:    protocol,
+		Description: description,
+
+		Started:  time.Time{},
+		Finished: time.Time{},
+
+		UserCommand:    make(chan string, 1),
+		WorkerResponse: make(chan string, 1),
+		ErrorChan:      make(chan error, 1),
+		XMLPathsChan:   make(chan string, 1),
+
+		// Other fields will be initialized with their zero values
+		// CancelFunc will be set when the worker is started
+		// Cmd will be set when the worker is started
+		// Output, Err, and StdError will be populated during/after execution
+	}
+}
+
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup {
+func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target) {
+	if targets == nil || len(targets) == 0 {
+		log.Println("[!] Input channel is nil or empty")
+		return
+	}
+
 	var wg sync.WaitGroup
-	if len(workers) == 0 {
-		// Drain any incoming targets so we don't block upstream
-		go func() {
-			for t := range inChan {
-				log.Printf("[!]  No workers defined. Draining target %s with ports %v", t.Host, t.Ports)
-			}
-		}()
-		return &wg
-	}
-
-	if inChan == nil {
-		log.Println("[!] Input channel is nil")
-		return &wg
-	}
-
-	log.Printf("[*] Starting %d workers", len(workers))
-
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
 
-		var batchID int
-		for batch := range helpers.ReadTargetsFromChannel(inChan, batchSize) {
-			if len(batch) == 0 {
-				continue
-			}
+		taskId := uuid.Must(uuid.NewUUID()).String()
 
-			prefix := fmt.Sprintf("batch_%d_", batchID)
-			f, err := files.WriteSliceToFile(scopeDir, prefix+inScopeFile, hostsFromBatch(batch))
-			if err != nil {
-				log.Printf("[!] Failed to write targets to file: %v", err)
-				continue
-			}
-			batchID++
-
-			for i := range workers {
-				w := &workers[i]
-				definePorts(w, batch)
-				wg.Add(1)
-				go func(w *models.Worker, localPath string) {
-					defer wg.Done()
-
-					args := append([]string{}, w.Args...)
-					reportName := helpers.SpacesToUnderscores(prefix + w.Description)
-					reportPath := path.Join(project.ReportDirParent, reportName)
-					w.XMLReportPath = reportPath + ".xml"
-
-					cmd := nmap.NewCommand("", "", nil)
-					cmd.Add().
-						InputFile(localPath).
-						OutputAll(reportPath)
-					args = append(args, cmd.ToArgList()...)
-
-					if project.ExcludeScopeFile != "" {
-						cmd.Add().ExcludeFile(project.ExcludeScopeFile)
-					}
-					runWorker(w, args)
-				}(w, f)
-			}
+		f, err := files.WriteSliceToFile(scopeDir, taskId+inScopeFile, extractHostIPs(targets))
+		if err != nil {
+			log.Printf("[!] Failed to write targets to file: %v", err)
+			return
 		}
-		log.Println("[*] Worker run complete...")
+
+		var workerWg sync.WaitGroup // Separate waitgroup for workers
+		log.Printf("[*] Starting %d workers", len(workers))
+		for i := range workers {
+			w := &workers[i]
+			determineAndAssignScanPorts(w, targets)
+			workerWg.Add(1)
+			go func(w *models.Worker, localPath string) {
+				defer workerWg.Done()
+
+				args := append([]string{}, w.Args...)
+				reportName := helpers.SpacesToUnderscores(taskId + w.Description)
+				reportPath := path.Join(project.ReportDirParent, reportName)
+				w.XMLReportPath = reportPath + ".xml"
+
+				cmd := nmap.NewCommand("", "", nil)
+				cmd.Add().
+					InputFile(localPath).
+					OutputAll(reportPath)
+				args = append(args, cmd.ToArgList()...)
+
+				if project.ExcludeScopeFile != "" {
+					cmd.Add().ExcludeFile(project.ExcludeScopeFile)
+				}
+				runWorker(w, args)
+			}(w, f)
+		}
+		log.Printf("[*] Worker %s run initiated", taskId)
+		workerWg.Wait()
+		log.Printf("[*] Worker %s completed", taskId)
 	}()
-	return &wg
+	return
 }
 
-func definePorts(w *models.Worker, batch []models.Target) {
+// determineAndAssignScanPorts configures port scanning settings for a worker based on target batch requirements.
+//
+// The function determines which TCP and/or UDP ports a worker should scan based on the worker's
+// configured protocol (TCP, UDP, or both) and the ports specified in the target batch. If no ports
+// are specified for a protocol that the worker is configured to use, default port settings are applied:
+// - For TCP: All ports are set to be scanned
+// - For UDP: Top 1000 most common ports are set to be scanned
+//
+// If ports are already hardcoded in the worker configuration, the function returns without making changes.
+//
+// Parameters:
+//   - w: Pointer to a worker model containing protocol configuration and where port settings will be stored
+//   - batch: Slice of target models from which to extract unique port specifications
+//
+// The function handles four main cases:
+//  1. TCP ports required but none specified in targets
+//  2. TCP ports specified and worker configured for TCP scanning
+//  3. UDP ports required but none specified in targets
+//  4. UDP ports specified and worker configured for UDP scanning
+//
+// Port settings are formatted according to nmap command requirements and stored in the worker model.
+func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 	if portsAreHardcoded(w) {
 		return
 	}
@@ -96,7 +128,7 @@ func definePorts(w *models.Worker, batch []models.Target) {
 	var udp []string
 	var tcp []string
 
-	tcpPorts := getUniquePortsForTargets(batch, nmap.TCP)
+	tcpPorts := getUniquePortsForTargets(targets, nmap.TCP)
 	if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
 		fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
 		cmd := nmap.NewCommand("", "", nil)
@@ -108,7 +140,7 @@ func definePorts(w *models.Worker, batch []models.Target) {
 		appendPorts(tcp, udp, w)
 	}
 
-	udpPorts := getUniquePortsForTargets(batch, nmap.UDP)
+	udpPorts := getUniquePortsForTargets(targets, nmap.UDP)
 	if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
 		fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
 		cmd := nmap.NewCommand("", "", nil)
@@ -150,7 +182,7 @@ func appendPorts(tcp, udp []string, w *models.Worker) {
 	}
 }
 
-func getUniquePortsForTargets(batch []models.Target, protocol string) []string {
+func getUniquePortsForTargets(batch []*models.Target, protocol string) []string {
 	uniquePorts := make(map[string]bool)
 	for _, host := range batch {
 		for _, port := range host.Ports {
@@ -186,7 +218,6 @@ func runWorker(w *models.Worker, args []string) {
 
 	if w.WorkerResponse != nil {
 		w.WorkerResponse <- string(output)
-		log.Printf("[worker-%s] Sent %d bytes to WorkerResponse", w.Description, len(output))
 	}
 
 	var xmlPath string
@@ -213,11 +244,11 @@ func runWorker(w *models.Worker, args []string) {
 		log.Printf("[worker-%s] Sent error to ErrorChan", w.Description)
 	}
 
-	log.Printf("[worker-%s] Worker finished", w.Description)
+	log.Printf("[worker-%s] Completed", w.Description)
 }
 
 // Utility function to extract just the host IPs
-func hostsFromBatch(batch []models.Target) []string {
+func extractHostIPs(batch []*models.Target) []string {
 	var list []string
 	for _, b := range batch {
 		list = append(list, b.Host)
@@ -258,16 +289,13 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		stdoutDone := make(chan struct{})
 		stderrDone := make(chan struct{})
 
-		// Stream stdout
 		go func() {
 			io.Copy(&stdoutBuf, stdoutPipe)
-			log.Printf("worker-%d: Captured %d bytes of stdout", worker.ID, stdoutBuf.Len())
 			close(stdoutDone)
 		}()
 
 		go func() {
 			io.Copy(&stderrBuf, stderrPipe)
-			log.Printf("worker-%d: Captured %d bytes of stderr", worker.ID, stderrBuf.Len())
 			close(stderrDone)
 		}()
 
@@ -278,7 +306,7 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				if status.Signaled() {
-					log.Printf("worker-%d: %s terminated by signal %d", worker.ID, cmdName, status.Signal())
+					log.Printf("worker-%s: %s terminated by signal %d", worker.ID, cmdName, status.Signal())
 				}
 			}
 		}
@@ -289,6 +317,5 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		stderr <- stderrBuf.String()
 		errs <- waitErr
 	}()
-
 	return cmd, stdout, stderr, errs, nil
 }
