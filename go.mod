@@ -5,6 +5,7 @@ go 1.23
 require github.com/alecthomas/kong v1.10.0
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/shirou/gopsutil/v4 v4.25.3
 	gopkg.in/yaml.v3 v3.0.1
 )
