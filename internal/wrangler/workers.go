@@ -241,9 +241,7 @@ func runWorker(w *models.Worker, args []string) {
 
 	if w.ErrorChan != nil {
 		w.ErrorChan <- err
-		log.Printf("[worker-%s] Sent error to ErrorChan", w.Description)
 	}
-
 	log.Printf("[worker-%s] Completed", w.Description)
 }
 

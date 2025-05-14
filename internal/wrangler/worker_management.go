@@ -78,8 +78,6 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 				return
 			}
 
-			log.Printf("[*] Received XML path %s from worker %d", xmlPath, w.ID)
-
 			nmapRun, err := nmap.ReadNmapXML(xmlPath)
 			if err != nil {
 				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
@@ -105,7 +103,6 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 					}
 				}
 			}
-			log.Printf("[*] XML processed for worker %d", w.ID)
 		}(w)
 	}
 }

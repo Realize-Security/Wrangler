@@ -61,9 +61,10 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	return &wranglerRepository{
 		cli:             cli,
 		serviceEnum:     concurrency.NewRegistry[models.Target](TargetEquals),
-		templateTargets: concurrency.NewRegistry[models.Target](TargetEquals),
 		staticWorkers:   concurrency.NewRegistry[models.Worker](WorkerEquals),
+		staticTargets:   concurrency.NewRegistry[models.Target](TargetEquals),
 		templateWorkers: concurrency.NewRegistry[models.Worker](WorkerEquals),
+		templateTargets: concurrency.NewRegistry[models.Target](TargetEquals),
 	}
 }
 
