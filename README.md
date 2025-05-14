@@ -19,6 +19,5 @@ Currently only service discovery on TCP is supported. This will have to be exten
 ## TODO:
 
 1. Implement SCTP support. 
-2. When application exits the report and scope directories are owned by root. Needs to be the user specified by the user.
-3. Rate limiting on number of concurrent batches.
-4. Implement broadcast pattern in channels to monitor tasks without draining pool. Fuck knows how to do that.
+2. Rate limiting on number of concurrent batches.
+3. Implement another layer of host discovery checking for at least one open port
