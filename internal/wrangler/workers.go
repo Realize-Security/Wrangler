@@ -37,11 +37,6 @@ func NewWorker(command string, args []string, protocol, description string) mode
 		WorkerResponse: make(chan string, 1),
 		ErrorChan:      make(chan error, 1),
 		XMLPathsChan:   make(chan string, 1),
-
-		// Other fields will be initialized with their zero values
-		// CancelFunc will be set when the worker is started
-		// Cmd will be set when the worker is started
-		// Output, Err, and StdError will be populated during/after execution
 	}
 }
 
@@ -254,8 +249,7 @@ func extractHostIPs(batch []*models.Target) []string {
 	return list
 }
 
-// runCommandCtx executes cmdName with args in its own process group
-// and returns the cmd object, combined stdout/stderr, and error.
+// runCommandCtx executes cmdName with args in its own process group and returns the cmd object, combined stdout/stderr, and error.
 func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (cmd *exec.Cmd, stdout, stderr chan string, errs chan error, startErr error) {
 	cmdName := worker.Command
 	cmd = exec.CommandContext(ctx, cmdName, args...)

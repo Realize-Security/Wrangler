@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 )
 
-// WorkerStop is the command used to tell the worker goroutine to exit.
+// WorkerStop is used to tell a worker goroutine to shut down.
 const WorkerStop = "STOP"
 
 var (
@@ -126,7 +126,6 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		exclude, err = files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
 	}
 
-	// Always run when the program exits
 	defer func() {
 		entries, err := os.ReadDir(project.ProjectBase)
 		if err != nil {
@@ -142,7 +141,6 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		}
 	}()
 
-	// Flatten user-supplied scope
 	var inScope []string
 	if wr.cli.ScopeFiles != "" {
 		inScope, err = wr.FlattenScopes(wr.cli.ScopeFiles)
