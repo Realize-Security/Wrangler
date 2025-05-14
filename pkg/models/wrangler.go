@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"os/exec"
 	"time"
 )
@@ -25,8 +26,7 @@ type Target struct {
 
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
-	ID            int
-	Type          string
+	ID            uuid.UUID // UUIDv1
 	Command       string
 	Args          []string
 	Protocol      string

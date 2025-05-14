@@ -2,30 +2,32 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
+	"Wrangler/pkg/concurrency"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"path"
 	"strings"
 	"sync"
-	"syscall"
+	"sync/atomic"
 )
 
-// workerStop is the command used to tell the worker goroutine to exit.
+// WorkerStop is the command used to tell the worker goroutine to exit.
 const WorkerStop = "STOP"
 
 var (
+	// Atomics
+	discoveryDone   atomic.Bool
+	serviceEnumDone atomic.Bool
+
 	scopeDir    = "discovered_scope"
 	inScopeFile = "in_scope.txt"
 	excludeFile = "out_of_scope.txt"
-	nonRootUser = ""
 	batchSize   = 200
-	allUpHosts  []string
 
-	// Channels & global vars
+	// Channels
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
 )
@@ -36,100 +38,34 @@ type WranglerRepository interface {
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup)
-	startWorkers(project *models.Project, workers []models.Worker, inChan <-chan models.Target, batchSize int) *sync.WaitGroup
-	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project) *sync.WaitGroup
+	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target)
+	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
 	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	TemplateScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup
-	GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target]
-	GetFullScanBroadcast() *TypedBroadcastChannel[models.Target]
+	TemplateScanners(project *models.Project, workers []models.Worker)
 }
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli               models.CLI
-	serviceEnum       chan models.Target // Keep as bidirectional for compatibility
-	fullScan          chan models.Target // Keep as bidirectional for compatibility
-	serviceEnumBC     *TypedBroadcastChannel[models.Target]
-	fullScanBC        *TypedBroadcastChannel[models.Target]
-	staticWorkers     []models.Worker
-	templateWorkers   []models.Worker
-	serviceEnumSource chan models.Target // For DiscoveryResponseMonitor
-	fullScanSource    chan models.Target // For MonitorServiceEnum
+	cli             models.CLI
+	serviceEnum     *concurrency.Registry[models.Target]
+	staticWorkers   *concurrency.Registry[models.Worker]
+	staticTargets   *concurrency.Registry[models.Target]
+	templateWorkers *concurrency.Registry[models.Worker]
+	templateTargets *concurrency.Registry[models.Target]
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
-	// Buffer size for channels
-	bufferSize := batchSize
-	if cli.BatchSize > 0 {
-		bufferSize = cli.BatchSize
-	}
-
-	// Create source channels for direct writing
-	serviceEnumSource := make(chan models.Target, bufferSize)
-	fullScanSource := make(chan models.Target, bufferSize)
-
-	// Create worker channels that will receive from broadcasts
-	serviceEnumMain := make(chan models.Target, bufferSize)
-	fullScanMain := make(chan models.Target, bufferSize)
-
-	// Create broadcast channels from source channels
-	serviceEnumBC := NewTypedBroadcastChannel[models.Target](serviceEnumSource)
-	fullScanBC := NewTypedBroadcastChannel[models.Target](fullScanSource)
-
-	// Subscribe the worker channels to the broadcast
-	subscribedServiceEnum := serviceEnumBC.Subscribe(bufferSize)
-	subscribedFullScan := fullScanBC.Subscribe(bufferSize)
-
-	// Forward from subscriptions to worker channels
-	go forwardChannel(subscribedServiceEnum, serviceEnumMain)
-	go forwardChannel(subscribedFullScan, fullScanMain)
-
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
-
 	return &wranglerRepository{
-		cli:               cli,
-		serviceEnum:       serviceEnumMain,   // Workers use this
-		fullScan:          fullScanMain,      // Workers use this
-		serviceEnumBC:     serviceEnumBC,     // External monitoring uses this
-		fullScanBC:        fullScanBC,        // External monitoring uses this
-		staticWorkers:     nil,               // Will be initialized in loadWorkers
-		templateWorkers:   nil,               // Will be initialized in loadWorkers
-		serviceEnumSource: serviceEnumSource, // Discovery monitor writes to this
-		fullScanSource:    fullScanSource,    // Service enum monitor writes to this
+		cli:             cli,
+		serviceEnum:     concurrency.NewRegistry[models.Target](TargetEquals),
+		staticWorkers:   concurrency.NewRegistry[models.Worker](WorkerEquals),
+		staticTargets:   concurrency.NewRegistry[models.Target](TargetEquals),
+		templateWorkers: concurrency.NewRegistry[models.Worker](WorkerEquals),
+		templateTargets: concurrency.NewRegistry[models.Target](TargetEquals),
 	}
-}
-
-// forwardChannel Helper function to forward messages from a read-only channel to a bidirectional channel
-func forwardChannel(in <-chan models.Target, out chan models.Target) {
-	defer func() {
-		// Recover from panic if channel is closed
-		if r := recover(); r != nil {
-			log.Printf("Recovered from panic in forwardChannel: %v", r)
-		}
-	}()
-
-	for t := range in {
-		select {
-		case out <- t:
-		default:
-			log.Println("Warning: Unable to forward message, channel might be closed")
-			return
-		}
-	}
-	close(out)
-}
-
-// GetServiceEnumBroadcast returns the broadcast channel for service enumeration
-func (wr *wranglerRepository) GetServiceEnumBroadcast() *TypedBroadcastChannel[models.Target] {
-	return wr.serviceEnumBC
-}
-
-// GetFullScanBroadcast returns the broadcast channel for full scan
-func (wr *wranglerRepository) GetFullScanBroadcast() *TypedBroadcastChannel[models.Target] {
-	return wr.fullScanBC
 }
 
 // NewProject creates a new Project (not yet started).
@@ -146,8 +82,6 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 		fmt.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
 		batchSize = wr.cli.BatchSize
 	}
-
-	nonRootUser = wr.cli.NonRootUser
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -218,11 +152,6 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		}
 	}
 
-	if len(inScope) > batchSize {
-		wr.fullScan = make(chan models.Target, len(inScope))
-		wr.serviceEnum = make(chan models.Target, len(inScope))
-	}
-
 	wr.loadWorkers()
 	wr.startScanProcess(project, inScope, exclude)
 }
@@ -239,19 +168,8 @@ func (wr *wranglerRepository) loadWorkers() {
 	log.Printf("[*] Loaded %d scans from YAML", len(scans))
 
 	var workers []models.Worker
-	for i, pattern := range scans {
-		w := models.Worker{
-			ID:             i,
-			Type:           pattern.Tool,
-			Command:        pattern.Tool,
-			Args:           pattern.Args,
-			Protocol:       pattern.Protocol,
-			Description:    pattern.Description,
-			UserCommand:    make(chan string, 1),
-			WorkerResponse: make(chan string, 1),
-			ErrorChan:      make(chan error, 1),
-			XMLPathsChan:   make(chan string, 1),
-		}
+	for _, s := range scans {
+		w := NewWorker(s.Tool, s.Args, s.Protocol, s.Description)
 		workers = append(workers, w)
 	}
 
@@ -263,9 +181,9 @@ func (wr *wranglerRepository) loadWorkers() {
 		}
 	}
 
-	wr.staticWorkers = static
-	wr.templateWorkers = templated
-
+	wr.staticWorkers.AddAll(static)
 	log.Printf("[*] Loaded %d static workers", len(static))
+
+	wr.templateWorkers.AddAll(templated)
 	log.Printf("[*] Loaded %d templated workers", len(templated))
 }

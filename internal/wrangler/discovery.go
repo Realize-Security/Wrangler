@@ -6,6 +6,7 @@ import (
 	"Wrangler/pkg/models"
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"log"
 	"strconv"
 	"sync"
@@ -13,7 +14,7 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) *sync.WaitGroup {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) {
 	var workers []models.Worker
 	var wg sync.WaitGroup
 
@@ -21,7 +22,6 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
 		if err != nil {
 			fmt.Printf("unable to create temp scope file: %s", err)
-			return nil
 		}
 
 		cmd := nmap.NewCommand("-sn", "-p-", nil)
@@ -36,12 +36,13 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			PerformanceTemplate(nmap.Aggressive).
 			InputFile(f).
 			NoResolve().
-			Verbose(nmap.VerbosityLow)
+			Verbose(nmap.VerbosityLow).
+			MaxRetries(2)
 		args := cmd.ToArgList()
 
+		// TODO: Refactor to use NewWorker() function
 		workers = append(workers, models.Worker{
-			ID:             i,
-			Type:           "nmap",
+			ID:             uuid.Must(uuid.NewUUID()),
 			Command:        "nmap",
 			Args:           args,
 			UserCommand:    make(chan string, 1),
@@ -54,16 +55,15 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 	wg.Add(len(workers))
 
 	wr.DiscoveryScan(workers, excludeFile, &wg)
-
 	wr.DiscoveryResponseMonitor(workers)
+
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
-
-	return &wg
 }
 
 func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup) {
+	discoveryDone.Store(false)
 	for i := range workers {
 		w := &workers[i]
 		w.Command = "nmap"
@@ -73,6 +73,7 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			w.Args = append(w.Args, cmd.ToArgList()...)
 		}
 
+		log.Println("[*] Host discovery started")
 		go func(dw *models.Worker) {
 			defer wg.Done()
 			dw.Started = time.Now()
@@ -97,7 +98,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			stderr := <-stderrChan
 			err := <-errChan
 
-			log.Printf("Worker %d: Sending %d bytes to WorkerResponse", dw.ID, len(stdout))
 			dw.WorkerResponse <- stdout
 			if err != nil {
 				if stderr != "" {
@@ -114,6 +114,12 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			dw.UserCommand <- "run"
 		}(w)
 	}
+
+	go func() {
+		wg.Wait()
+		log.Println("[*] Host discovery complete")
+		discoveryDone.Store(true)
+	}()
 }
 
 // chunkSlice splits the slice `src` into multiple slices of length `chunkSize`. The last chunk may be shorter if there aren't enough elements left.

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 )
 
 func (wr *wranglerRepository) startScanProcess(
@@ -27,165 +28,133 @@ func (wr *wranglerRepository) startScanProcess(
 		}
 	}(tempDir)
 
-	// Step 1: Run host discovery and block until complete
-	log.Println("[*] Starting discovery")
-	discoveryWg := wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
-	if discoveryWg != nil {
-		log.Println("[DEBUG] Waiting for discovery to complete")
-		discoveryWg.Wait()
-		log.Println("[DEBUG] Discovery complete")
-	}
+	// Step 1: Run host discovery
+	wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
 
-	// Step 2: Start static workers AFTER discovery is complete to use allUpHosts
-	log.Println("[*] Starting static worker templates")
-	staticWg := wr.StaticScanners(project, wr.staticWorkers)
+	// Step 2: Start static workers
+	wr.StaticScanners(project, wr.staticWorkers.GetAll())
 
-	// Step 3: Start service enumeration
-	log.Println("[*] Starting ServiceEnumeration")
-	parseWg, enumWg := wr.ServiceEnumeration(project)
+	// Step 3: Start  service enumeration
+	wr.ServiceEnumeration(project)
 
-	// Step 4: Start primary scanners after service enumeration in a goroutine
-	primaryDone := make(chan struct{})
-	go func() {
-		// Wait for static scanners to complete
-		if staticWg != nil {
-			log.Println("[DEBUG] Waiting for static workers to complete")
-			staticWg.Wait()
-			log.Println("[DEBUG] Static workers complete")
-		}
+	// Step 4: Start primary scanners
+	wr.TemplateScanners(project, wr.templateWorkers.GetAll())
 
-		log.Println("[DEBUG] Waiting for service enumeration to complete")
-		enumWg.Wait()
-		parseWg.Wait()
-		log.Println("[*] Service enumeration complete, closing fullScan channel")
-		close(wr.fullScan)
-
-		log.Println("[*] Starting template-based TemplateScanners")
-		primaryWg := wr.TemplateScanners(project, wr.templateWorkers)
-		if primaryWg != nil {
-			log.Println("[DEBUG] Waiting for template scanners to complete")
-			primaryWg.Wait()
-			log.Println("[DEBUG] Template scanners complete")
-		}
-		wr.Cleanup()
-		close(primaryDone)
-
-	}()
-
-	// Main goroutine returns immediately, not blocking
 	log.Println("[*] Scanning initiated, running in background")
 }
 
-func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) (*sync.WaitGroup, *sync.WaitGroup) {
-	wTCP := models.Worker{
-		ID:             1,
-		Type:           "nmap",
-		Command:        "nmap",
-		Protocol:       "tcp",
-		Description:    "TCP service discovery scan",
-		UserCommand:    make(chan string, 1),
-		WorkerResponse: nil,
-		ErrorChan:      make(chan error),
-		XMLPathsChan:   make(chan string),
-	}
+func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) {
+	var wg sync.WaitGroup
+	serviceEnumDone.Store(false)
+	for {
+		if discoveryDone.Load() && wr.serviceEnum.Len() == 0 {
+			fmt.Println("[*] Static scanners completed")
+			return
+		}
 
-	wUDP := models.Worker{
-		ID:             2,
-		Type:           "nmap",
-		Command:        "nmap",
-		Protocol:       "udp",
-		Description:    "UDP service discovery scan",
-		UserCommand:    make(chan string, 1),
-		WorkerResponse: nil,
-		ErrorChan:      make(chan error),
-		XMLPathsChan:   make(chan string),
-	}
+		if wr.serviceEnum.Len() == 0 {
+			// Gently throttle loops
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		targets := wr.serviceEnum.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-	// Configure TCP command
-	tcpCmd := nmap.NewCommand(nmap.TCP, "-p-", nil)
-	tcpCmd.Add().
-		MinHostGroup(100).
-		MinRate(150).
-		MaxRetries(2)
+		// Configure TCP command
+		tcpCmd := nmap.NewCommand(nmap.TCP, "-p-", nil)
+		tcpCmd.Add().
+			MinHostGroup(100).
+			MinRate(150).
+			MaxRetries(2)
 
-	// Configure UDP command
-	udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
-	udpCmd.Add().
-		MinHostGroup(100).
-		MinRate(150).
-		MaxRetries(2).
-		TopPorts(1000)
+		desc := "TCP service discovery scan"
+		wTCP := NewWorker("nmap", nil, nmap.TCP, desc)
+		wTCP.Args = tcpCmd.ToArgList()
 
-	// Assign arguments to workers
-	wTCP.Args = tcpCmd.ToArgList()
-	wUDP.Args = udpCmd.ToArgList()
+		// Configure UDP command
+		udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
+		udpCmd.Add().
+			MinHostGroup(100).
+			MinRate(150).
+			MaxRetries(2).
+			TopPorts(1000)
 
-	workers := []models.Worker{wTCP, wUDP}
+		desc = "UDP service discovery scan"
+		wUDP := NewWorker("nmap", nil, nmap.UDP, desc)
+		wUDP.Args = udpCmd.ToArgList()
 
-	enumWg := wr.startWorkers(project, workers, wr.serviceEnum, batchSize)
-	log.Println("[*] Workers started...")
+		workers := []models.Worker{
+			wTCP,
+			wUDP,
+		}
+		wg.Add(len(workers))
 
-	parseWg := wr.MonitorServiceEnum(workers)
-	log.Println("[*] Service enumeration started...")
+		log.Println("[*] Starting service enumeration")
+		wr.startWorkers(project, workers, targets)
+		wr.MonitorServiceEnum(workers)
+		wr.SetupSignalHandler(workers, sigCh)
+		wr.DrainWorkerErrors(workers, errCh)
+		wr.ListenToWorkerErrors(workers, errCh)
 
-	wr.SetupSignalHandler(workers, sigCh)
-	wr.DrainWorkerErrors(workers, errCh)
-	wr.ListenToWorkerErrors(workers, errCh)
-
-	return parseWg, enumWg
-}
-
-func (wr *wranglerRepository) StaticScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
-	if len(allUpHosts) > 0 {
-		log.Printf("[*] Starting %d static workers", len(workers))
-	} else {
-		log.Print("[!] No hosts discovered")
-		return nil
-	}
-
-	ch := make(chan models.Target, len(allUpHosts))
-	for _, host := range allUpHosts {
-		ch <- models.Target{Host: host}
-	}
-
-	wg := wr.startWorkers(project, workers, ch, batchSize)
-	if wg == nil {
-		log.Println("[!] No workers returned for primary scanners")
-		return &sync.WaitGroup{}
-	}
-
-	wr.SetupSignalHandler(workers, sigCh)
-	wr.DrainWorkerErrors(workers, errCh)
-	wr.ListenToWorkerErrors(workers, errCh)
-
-	log.Println("[*] Primary scanners running")
-	return wg
-}
-
-func (wr *wranglerRepository) TemplateScanners(project *models.Project, workers []models.Worker) *sync.WaitGroup {
-	if len(workers) == 0 {
-		log.Println("[!] No workers, skipping")
-		var wg sync.WaitGroup
 		go func() {
-			for t := range wr.fullScan {
-				log.Printf("[*] Draining target %s with ports %v", t.Host, t.Ports)
-			}
+			wg.Wait()
+			log.Println("[*] Service enumeration completed")
+			serviceEnumDone.Store(true)
 		}()
-		return &wg
 	}
+}
 
-	log.Printf("[*] Starting %d workers", len(workers))
+func (wr *wranglerRepository) StaticScanners(project *models.Project, workers []models.Worker) {
+	var count = 0
+	for {
+		if discoveryDone.Load() && wr.staticTargets.Len() == 0 {
+			fmt.Println("[*] Static scanners completed")
+			break
+		}
 
-	wg := wr.startWorkers(project, workers, wr.fullScan, batchSize)
-	if wg == nil {
-		log.Println("[!] No workers returned for primary scanners")
-		return &sync.WaitGroup{}
+		if wr.staticTargets.Len() == 0 {
+			// Gently throttle any loops
+			time.Sleep(time.Second * 2)
+			continue
+		}
+
+		log.Printf("[*] Starting %d static scanners", len(workers))
+		targets := wr.staticTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
+
+		wr.startWorkers(project, workers, targets)
+		wr.SetupSignalHandler(workers, sigCh)
+		wr.DrainWorkerErrors(workers, errCh)
+		wr.ListenToWorkerErrors(workers, errCh)
+
+		log.Printf("[*] Static scanner %d running", count)
+		count++
 	}
+}
 
-	wr.SetupSignalHandler(workers, sigCh)
-	wr.DrainWorkerErrors(workers, errCh)
-	wr.ListenToWorkerErrors(workers, errCh)
+func (wr *wranglerRepository) TemplateScanners(project *models.Project, workers []models.Worker) {
+	for {
+		if serviceEnumDone.Load() && wr.templateTargets.Len() == 0 && wr.serviceEnum.Len() == 0 {
+			fmt.Println("[*] Template scanners completed")
+			break
+		}
 
-	log.Println("[*] Primary scanners running")
-	return wg
+		if wr.templateTargets.Len() == 0 {
+			// Gently throttle any loops
+			time.Sleep(time.Second * 2)
+			continue
+		}
+
+		if len(workers) == 0 {
+			log.Println("[!] No template workers, skipping")
+			continue
+		}
+
+		targets := wr.templateTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
+
+		log.Printf("[*] Starting %d template scanners", len(workers))
+		wr.startWorkers(project, workers, targets)
+		wr.SetupSignalHandler(workers, sigCh)
+		wr.DrainWorkerErrors(workers, errCh)
+		wr.ListenToWorkerErrors(workers, errCh)
+		log.Println("[*] Templated scanners running")
+	}
 }
