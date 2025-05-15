@@ -55,7 +55,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 
 		taskId := uuid.Must(uuid.NewUUID()).String()
 
-		f, err := files.WriteSliceToFile(scopeDir, taskId+inScopeFile, extractHostIPs(targets))
+		f, err := files.WriteSliceToFile(scopeDir, taskId+"_"+inScopeFile, extractHostIPs(targets))
 		if err != nil {
 			log.Printf("[!] Failed to write targets to file: %v", err)
 			return
@@ -71,7 +71,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 				defer workerWg.Done()
 
 				args := append([]string{}, w.Args...)
-				reportName := helpers.SpacesToUnderscores(taskId + w.Description)
+				reportName := helpers.SpacesToUnderscores(taskId + "_" + w.Description)
 				reportPath := path.Join(project.ReportDirParent, reportName)
 				w.XMLReportPath = reportPath + ".xml"
 
