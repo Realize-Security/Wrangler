@@ -66,21 +66,22 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 		w := &workers[i]
 		wg.Add(1)
 		go func(w *models.Worker) {
-			log.Printf("[*] Worker %d: Routine started", w.ID)
+			id := w.ID.String()
+			log.Printf("[*] Worker %s: Routine started", id)
 			defer func() {
 				wg.Done()
-				log.Printf("[*] Worker %d: Routine completed", w.ID)
+				log.Printf("[*] Worker %s: Routine completed", id)
 			}()
 
 			xmlPath, ok := <-w.XMLPathsChan
 			if !ok {
-				log.Printf("[*] XMLPathsChan closed for worker %d", w.ID)
+				log.Printf("[*] XMLPathsChan closed for worker %s", id)
 				return
 			}
 
 			nmapRun, err := nmap.ReadNmapXML(xmlPath)
 			if err != nil {
-				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
+				log.Printf("[!] Unable to parse XML file %s for worker %s: %v", xmlPath, id, err)
 				w.ErrorChan <- err
 				return
 			}
