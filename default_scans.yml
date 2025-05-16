@@ -1,10 +1,13 @@
 service-aliases:
     - services: "smb"
       aliases: ["microsoft-ds", "netbios-ssn", "cifs", "samba"]
+
     - services: "ssh"
       aliases: ["openssh", "ssh2", "secure-shell", "sftp"]
+
     - services: "http"
       aliases: ["www", "http-alt", "websocket", "https"]
+
     - services: "ftp"
       aliases: ["sftp", "ftps"]
 
