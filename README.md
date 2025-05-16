@@ -22,7 +22,3 @@ Currently only service discovery on TCP is supported. This will have to be exten
 2. Rate limiting on number of concurrent batches.
 3. Implement another layer of host discovery checking for at least one open port
 4. Review host discovery nmap approach
-
-## Bugs:
-
-1. When all scans finish, the application is hanging and not terminating gracefully.

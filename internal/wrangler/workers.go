@@ -1,7 +1,6 @@
 package wrangler
 
 import (
-	"Wrangler/internal/files"
 	"Wrangler/internal/nmap"
 	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
@@ -59,9 +58,16 @@ func (wr *wranglerRepository) appendExclusions(args *[]string) {
 }
 
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target) {
+// Now accepts an optional parent waitgroup to signal completion back to the caller
+func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target, parentWg *sync.WaitGroup) {
 	if targets == nil || len(targets) == 0 {
 		log.Println("[!] Input channel is nil or empty")
+		if parentWg != nil {
+			// Make sure we still decrement the wait counter even if no work was done
+			for range workers {
+				parentWg.Done()
+			}
+		}
 		return
 	}
 
@@ -70,14 +76,17 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 
 	go func() {
 		defer wg.Done()
+		// When all work is done, signal to the parent waitgroup
+		defer func() {
+			if parentWg != nil {
+				for range workers {
+					parentWg.Done()
+				}
+			}
+		}()
 
+		f := project.InScopeFile
 		taskId := uuid.Must(uuid.NewUUID()).String()
-
-		f, err := files.WriteSliceToFile(scopeDir, taskId+"_"+inScopeFile, extractHostIPs(targets))
-		if err != nil {
-			log.Printf("[!] Failed to write targets to file: %v", err)
-			return
-		}
 
 		var workerWg sync.WaitGroup
 		log.Printf("[*] Starting %d workers", len(workers))
@@ -98,16 +107,13 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 					InputFile(localPath).
 					OutputAll(reportPath)
 				args = append(args, cmd.ToArgList()...)
-				//
-				//if project.ExcludeScopeFile != "" {
-				//	cmd.Add().ExcludeFile(project.ExcludeScopeFile)
-				//}
+
 				runWorker(w, args)
 			}(w, f)
 		}
-		log.Printf("[*] Worker %s: Run initiated", taskId)
+		log.Printf("[*] Worker run initiated")
 		workerWg.Wait()
-		log.Printf("[*] Worker %s: Run completed", taskId)
+		log.Printf("[*] Worker run completed")
 	}()
 	return
 }
@@ -127,7 +133,7 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 			t := nmap.TCPPortPrefix + strings.Join(tcpPorts, ",")
 			tcp = []string{t}
 		} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
-			fmt.Println("[!] No TCP ports found for services: " + targetServiceStr)
+			log.Println("[!] No TCP ports found for services: " + targetServiceStr)
 		}
 
 		udpPorts := getUniquePortsForTargetsAndService(targets, nmap.UDP, w.TargetService)
@@ -135,13 +141,13 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 			u := nmap.UDPPortPrefix + strings.Join(udpPorts, ",")
 			udp = []string{u}
 		} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
-			fmt.Println("[!] No UDP ports found for services: " + targetServiceStr)
+			log.Println("[!] No UDP ports found for services: " + targetServiceStr)
 		}
 	} else {
 		// Default implementation for workers without a target service
 		tcpPorts := getUniquePortsForTargets(targets, nmap.TCP)
 		if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
-			fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
+			log.Println("[!] TCP ports nil or empty. setting all TCP ports")
 			cmd := nmap.NewCommand("")
 			cmd.Add().AllPorts()
 			tcp = cmd.ToArgList()
@@ -161,7 +167,6 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 			udp = []string{u}
 		}
 	}
-	// Call appendPorts once at the end with complete tcp and udp lists
 	appendPorts(tcp, udp, w)
 }
 
@@ -185,7 +190,8 @@ func getUniquePortsForTargetsAndService(batch []*models.Target, protocol string,
 
 func portsAreHardcoded(worker *models.Worker) bool {
 	for _, arg := range worker.Args {
-		if strings.HasPrefix(arg, "-p") || arg == "-p-" || arg == "--top-ports" {
+		trimmedArg := strings.TrimSpace(arg)
+		if strings.HasPrefix(trimmedArg, "-p") || trimmedArg == "-p-" || trimmedArg == "--top-ports" {
 			return true
 		}
 	}
@@ -194,22 +200,48 @@ func portsAreHardcoded(worker *models.Worker) bool {
 
 func appendPorts(tcp, udp []string, w *models.Worker) {
 	if len(tcp) > 0 && len(udp) > 0 {
-		t := strings.Join(tcp, ",")
-		u := strings.Join(udp, ",")
-		joined := strings.Join([]string{t, u}, ",")
-		joined = "-p " + joined
-		w.Args = append(w.Args, joined)
-
+		// Check if already contains port flags
+		if containsPortFlag(tcp) || containsPortFlag(udp) {
+			// Add arguments directly without adding another -p
+			w.Args = append(w.Args, tcp...)
+			w.Args = append(w.Args, udp...)
+		} else {
+			t := strings.Join(tcp, ",")
+			u := strings.Join(udp, ",")
+			joined := strings.Join([]string{t, u}, ",")
+			joined = "-p " + joined
+			w.Args = append(w.Args, joined)
+		}
 	} else if len(tcp) > 0 && len(udp) == 0 {
-		t := strings.Join(tcp, ",")
-		t = "-p " + t
-		w.Args = append(w.Args, t)
-
+		// Only TCP ports
+		if containsPortFlag(tcp) {
+			w.Args = append(w.Args, tcp...)
+		} else {
+			t := strings.Join(tcp, ",")
+			t = "-p " + t
+			w.Args = append(w.Args, t)
+		}
 	} else if len(udp) > 0 && len(tcp) == 0 {
-		u := strings.Join(udp, ",")
-		u = "-p " + u
-		w.Args = append(w.Args, u)
+		// Only UDP ports
+		if containsPortFlag(udp) {
+			w.Args = append(w.Args, udp...)
+		} else {
+			u := strings.Join(udp, ",")
+			u = "-p " + u
+			w.Args = append(w.Args, u)
+		}
 	}
+}
+
+// Helper function to check if args contain any port-related flags
+func containsPortFlag(args []string) bool {
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if strings.HasPrefix(trimmed, "-p") || trimmed == "--top-ports" {
+			return true
+		}
+	}
+	return false
 }
 
 func getUniquePortsForTargets(batch []*models.Target, protocol string) []string {

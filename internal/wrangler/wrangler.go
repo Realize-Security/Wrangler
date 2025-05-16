@@ -44,7 +44,7 @@ type WranglerRepository interface {
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup)
-	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target)
+	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target, parentWg *sync.WaitGroup)
 	DiscoveryWorkersInit(inScope []string, scopeDir string)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(inScope []string)
@@ -158,6 +158,24 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 			fmt.Printf(err.Error())
 			return
 		}
+
+		// Create scope directory if it doesn't exist
+		err = files.CreateDir(scopeDir)
+		if err != nil {
+			fmt.Printf("[!] Failed to create scope directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Write all targets to the single in-scope file
+		inScopePath, err := files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
+		if err != nil {
+			fmt.Printf("[!] Failed to write targets to file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Update the project's InScopeFile to point to the created file
+		project.InScopeFile = inScopePath
+		fmt.Printf("[*] Created single scope file: %s\n", project.InScopeFile)
 	}
 
 	wr.loadWorkers()
