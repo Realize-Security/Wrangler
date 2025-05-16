@@ -52,8 +52,8 @@ func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) 
 	}()
 }
 
-// MonitorServiceEnum parses each Nmap XML from the service enumeration stage & pushes open hosts/ports.
-func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
+// ServiceEnumerationMonitor parses each Nmap XML from the service enumeration stage & pushes open hosts/ports.
+func (wr *wranglerRepository) ServiceEnumerationMonitor(workers []models.Worker) {
 	var wg sync.WaitGroup
 	if len(workers) == 0 {
 		log.Println("[!] No workers to monitor")
