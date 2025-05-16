@@ -15,17 +15,19 @@ var (
 )
 
 const (
-	TCP        = "tcp"
-	UDP        = "udp"
-	TCPandUDP  = "both"
-	SYN        = "ss"
-	NoPorts    = "sn"
-	Paranoid   = "0"
-	Sneaky     = "1"
-	Polite     = "2"
-	Normal     = "3"
-	Aggressive = "4"
-	Insane     = "5"
+	TCP           = "tcp"
+	UDP           = "udp"
+	TCPandUDP     = "both"
+	SYN           = "ss"
+	NoPorts       = "sn"
+	TCPPortPrefix = "T:"
+	UDPPortPrefix = "U:"
+	Paranoid      = "0"
+	Sneaky        = "1"
+	Polite        = "2"
+	Normal        = "3"
+	Aggressive    = "4"
+	Insane        = "5"
 )
 
 // Command holds the scan type, targets, and a map of arguments
