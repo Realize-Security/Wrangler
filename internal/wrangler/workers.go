@@ -98,10 +98,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 					InputFile(localPath).
 					OutputAll(reportPath)
 				args = append(args, cmd.ToArgList()...)
-				//
-				//if project.ExcludeScopeFile != "" {
-				//	cmd.Add().ExcludeFile(project.ExcludeScopeFile)
-				//}
+
 				runWorker(w, args)
 			}(w, f)
 		}
