@@ -66,15 +66,15 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 		w := &workers[i]
 		wg.Add(1)
 		go func(w *models.Worker) {
-			log.Printf("[*] Worker %d: Routine started", w.ID)
+			log.Printf("[*] Worker %s: Routine started", w.ID.String())
 			defer func() {
 				wg.Done()
-				log.Printf("[*] Worker %d: Routine completed", w.ID)
+				log.Printf("[*] Worker %s: Routine completed", w.ID.String())
 			}()
 
 			xmlPath, ok := <-w.XMLPathsChan
 			if !ok {
-				log.Printf("[*] XMLPathsChan closed for worker %d", w.ID)
+				log.Printf("[*] XMLPathsChan closed for worker %s", w.ID.String())
 				return
 			}
 
@@ -274,7 +274,7 @@ func drainRegistryWorker(registry *concurrency.Registry[models.Worker], name str
 		for _, worker := range batch {
 			// Cancel the context if it exists
 			if worker.CancelFunc != nil {
-				log.Printf("Canceling context for worker %d", worker.ID)
+				log.Printf("Canceling context for worker %S", worker.ID.String())
 				worker.CancelFunc()
 			}
 
@@ -296,9 +296,9 @@ func drainRegistryWorker(registry *concurrency.Registry[models.Worker], name str
 			// If worker has a command that's still running, try to kill the process group
 			if worker.Cmd != nil && worker.Cmd.Process != nil {
 				pgid := worker.Cmd.Process.Pid
-				log.Printf("Attempting to kill process group for worker %d (PGID: %d)", worker.ID, pgid)
+				log.Printf("Attempting to kill process group for worker %s (PGID: %d)", worker.ID.String(), pgid)
 				if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-					log.Printf("Failed to kill process group for worker %d: %v", worker.ID, err)
+					log.Printf("Failed to kill process group for worker %s: %v", worker.ID.String(), err)
 				}
 			}
 		}
