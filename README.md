@@ -25,4 +25,4 @@ Currently only service discovery on TCP is supported. This will have to be exten
 
 ## Bugs:
 
-1. When all scans finish, the application is hanging and not terminating gracefully.
+1. Nmap vuln scan report is empty file
