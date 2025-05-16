@@ -229,18 +229,18 @@ func listProcessesByPGID(pgid int) ([]int, error) {
 
 // GracefulCloseDown gracefully shuts down by signaling to stop discovery
 // and service enumeration, then draining all registries
-func (w *wranglerRepository) GracefulCloseDown() {
+func (wr *wranglerRepository) GracefulCloseDown() {
 	discoveryDone.Store(true)
 	serviceEnumDone.Store(true)
 
 	log.Println("Starting graceful shutdown")
 
-	drainRegistryWorker(w.staticWorkers, "Static Workers")
-	drainRegistryWorker(w.templateWorkers, "Template Workers")
+	drainRegistryWorker(wr.staticWorkers, "Static Workers")
+	drainRegistryWorker(wr.templateWorkers, "Template Workers")
 
-	drainRegistryTarget(w.serviceEnum, "Service Enumeration")
-	drainRegistryTarget(w.staticTargets, "Static Targets")
-	drainRegistryTarget(w.templateTargets, "Template Targets")
+	drainRegistryTarget(wr.serviceEnum, "Service Enumeration")
+	drainRegistryTarget(wr.staticTargets, "Static Targets")
+	drainRegistryTarget(wr.templateTargets, "Template Targets")
 
 	log.Println("Graceful shutdown completed")
 }
