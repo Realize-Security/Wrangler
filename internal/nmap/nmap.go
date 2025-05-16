@@ -19,7 +19,7 @@ const (
 	UDP           = "udp"
 	TCPandUDP     = "both"
 	SYN           = "ss"
-	NoPorts       = "sn"
+	NoPortScan    = "sn"
 	TCPPortPrefix = "T:"
 	UDPPortPrefix = "U:"
 	Paranoid      = "0"
@@ -168,7 +168,7 @@ func NewCommand(scanType string) *Command {
 		defaultArgs["-sTU"] = ""
 	case SYN:
 		defaultArgs["-sS"] = ""
-	case NoPorts:
+	case NoPortScan:
 		defaultArgs["-sn"] = ""
 	}
 
