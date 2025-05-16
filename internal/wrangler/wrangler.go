@@ -3,6 +3,7 @@ package wrangler
 import (
 	"Wrangler/internal/files"
 	"Wrangler/pkg/concurrency"
+	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
@@ -40,7 +41,6 @@ type WranglerRepository interface {
 	DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup)
 	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target)
 	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
-	CreateReportDirectory(dir, projectName string) (string, error)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
 	TemplateScanners(project *models.Project, workers []models.Worker)
@@ -92,12 +92,13 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	scopeDir = path.Join(cwd, scopeDir+"-"+project.Name)
 	project.TempPrefix = project.TempPrefix + "-" + project.Name
 
-	reportDirectory, err := wr.CreateReportDirectory(wr.cli.Output, wr.cli.ProjectName)
+	report := path.Join(cwd, wr.cli.Output, helpers.SpacesToUnderscores(wr.cli.ProjectName))
+	err = files.CreateDir(report)
 	if err != nil {
 		fmt.Printf("[!] Failed to create report directory: %v\n", err)
-		return nil
+		os.Exit(1)
 	}
-	project.ReportDirParent = reportDirectory
+	project.ReportDirParent = report
 	project.ProjectReportPath = path.Join(project.ReportDirParent, project.Name)
 
 	project.InScopeFile = path.Join(cwd, scopeDir, inScopeFile)
