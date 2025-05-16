@@ -27,10 +27,11 @@ type Target struct {
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
 	ID            uuid.UUID // UUIDv1
-	Command       string
+	Tool          string
 	Args          []string
 	Protocol      string
 	Target        string
+	TargetService []string
 	Description   string
 	XMLReportPath string
 

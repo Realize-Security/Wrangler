@@ -15,23 +15,25 @@ var (
 )
 
 const (
-	TCP        = "tcp"
-	UDP        = "udp"
-	TCPandUDP  = "both"
-	SYN        = "ss"
-	NoPorts    = "sn"
-	Paranoid   = "0"
-	Sneaky     = "1"
-	Polite     = "2"
-	Normal     = "3"
-	Aggressive = "4"
-	Insane     = "5"
+	BinaryName    = "nmap"
+	TCP           = "tcp"
+	UDP           = "udp"
+	TCPandUDP     = "both"
+	SYN           = "ss"
+	NoPortScan    = "sn"
+	TCPPortPrefix = "T:"
+	UDPPortPrefix = "U:"
+	Paranoid      = "0"
+	Sneaky        = "1"
+	Polite        = "2"
+	Normal        = "3"
+	Aggressive    = "4"
+	Insane        = "5"
 )
 
 // Command holds the scan type, targets, and a map of arguments
 type Command struct {
 	ScanType string
-	Targets  string
 	Args     map[string]string
 }
 
@@ -155,11 +157,9 @@ func (a *Add) Custom(key, value string) *Add {
 }
 
 // NewCommand creates a new Command with default arguments
-func NewCommand(scanType, targets string, customArgs map[string]string) *Command {
-	// Default arguments
+func NewCommand(scanType string) *Command {
 	defaultArgs := make(map[string]string)
 
-	// Apply scan-type flags
 	switch scanType {
 	case TCP:
 		defaultArgs["-sT"] = ""
@@ -169,22 +169,17 @@ func NewCommand(scanType, targets string, customArgs map[string]string) *Command
 		defaultArgs["-sTU"] = ""
 	case SYN:
 		defaultArgs["-sS"] = ""
-	case NoPorts:
+	case NoPortScan:
 		defaultArgs["-sn"] = ""
 	}
 
-	// Create Args map by merging defaults with custom arguments
 	args := make(map[string]string)
 	for key, value := range defaultArgs {
 		args[key] = value
 	}
-	for key, value := range customArgs {
-		args[key] = value // Override defaults with custom values
-	}
 
 	return &Command{
 		ScanType: scanType,
-		Targets:  targets,
 		Args:     args,
 	}
 }

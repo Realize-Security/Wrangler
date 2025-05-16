@@ -14,7 +14,7 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile, scopeDir string, project *models.Project) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir string) {
 	var workers []models.Worker
 	var wg sync.WaitGroup
 
@@ -24,9 +24,9 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			fmt.Printf("unable to create temp scope file: %s", err)
 		}
 
-		cmd := nmap.NewCommand("-sn", "-p-", nil)
+		cmd := nmap.NewCommand("-sn")
 		cmd.Add().
-			Custom("-PS22,80,443,3389", "").
+			Custom("-PS21,22,80,443,3389", "").
 			Custom("-PA80,443", "").
 			Custom("-PU40125", "").
 			Custom("-PY80,443", "").
@@ -38,12 +38,13 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			NoResolve().
 			Verbose(nmap.VerbosityLow).
 			MaxRetries(2)
+
 		args := cmd.ToArgList()
 
-		// TODO: Refactor to use NewWorker() function
+		// TODO: Refactor to use NewWorkerNoService() function
 		workers = append(workers, models.Worker{
 			ID:             uuid.Must(uuid.NewUUID()),
-			Command:        "nmap",
+			Tool:           getBinaryPath(nmap.BinaryName),
 			Args:           args,
 			UserCommand:    make(chan string, 1),
 			WorkerResponse: make(chan string),
@@ -54,7 +55,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 
 	wg.Add(len(workers))
 
-	wr.DiscoveryScan(workers, excludeFile, &wg)
+	wr.DiscoveryScan(workers, &wg)
 	wr.DiscoveryResponseMonitor(workers)
 
 	wr.DrainWorkerErrors(workers, errCh)
@@ -62,16 +63,11 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 	wr.SetupSignalHandler(workers, sigCh)
 }
 
-func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup) {
+func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup) {
 	discoveryDone.Store(false)
 	for i := range workers {
 		w := &workers[i]
-		w.Command = "nmap"
-		if exclude != "" {
-			cmd := nmap.NewCommand("", "", nil)
-			cmd.Add().ExcludeFile(exclude)
-			w.Args = append(w.Args, cmd.ToArgList()...)
-		}
+		w.Tool = getBinaryPath(nmap.BinaryName)
 
 		log.Println("[*] Host discovery started")
 		go func(dw *models.Worker) {
@@ -85,7 +81,7 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, exclude str
 			dw.Cmd = cmdObj
 
 			if startErr != nil {
-				log.Printf("Worker %d: Start failed: %v", dw.ID, startErr)
+				log.Printf("Worker %s: Start failed: %v", dw.ID.String(), startErr)
 				dw.ErrorChan <- startErr
 				dw.WorkerResponse <- ""
 				close(dw.WorkerResponse)

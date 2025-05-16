@@ -11,11 +11,8 @@ import (
 	"time"
 )
 
-func (wr *wranglerRepository) startScanProcess(
-	project *models.Project,
-	inScope []string,
-	exclude string,
-) {
+// startScanProcess kicks off scanning stage in order
+func (wr *wranglerRepository) startScanProcess(inScope []string) {
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
 	if err != nil {
 		fmt.Printf("unable to create temp scope file directory: %s", err)
@@ -29,23 +26,25 @@ func (wr *wranglerRepository) startScanProcess(
 	}(tempDir)
 
 	// Step 1: Run host discovery
-	wr.DiscoveryWorkersInit(inScope, exclude, tempDir, project)
+	wr.DiscoveryWorkersInit(inScope, tempDir)
 
 	// Step 2: Start static workers
-	wr.StaticScanners(project, wr.staticWorkers.GetAll())
+	wr.staticScanners(wr.staticWorkers.GetAll())
 
 	// Step 3: Start  service enumeration
-	wr.ServiceEnumeration(project)
+	wr.serviceEnumeration()
 
 	// Step 4: Start primary scanners
-	wr.TemplateScanners(project, wr.templateWorkers.GetAll())
+	wr.templateScanners(wr.templateWorkers.GetAll())
 
 	log.Println("[*] Scanning initiated, running in background")
 }
 
-func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) {
+// serviceEnumeration scans identified hosts to identify open ports and determine what services are listening
+func (wr *wranglerRepository) serviceEnumeration() {
 	var wg sync.WaitGroup
 	serviceEnumDone.Store(false)
+	nmapBin := getBinaryPath(nmap.BinaryName)
 	for {
 		if discoveryDone.Load() && wr.serviceEnum.Len() == 0 {
 			fmt.Println("[*] Static scanners completed")
@@ -60,18 +59,19 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) {
 		targets := wr.serviceEnum.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
 		// Configure TCP command
-		tcpCmd := nmap.NewCommand(nmap.TCP, "-p-", nil)
+		tcpCmd := nmap.NewCommand(nmap.TCP)
 		tcpCmd.Add().
 			MinHostGroup(100).
 			MinRate(150).
-			MaxRetries(2)
+			MaxRetries(2).
+			AllPorts()
 
 		desc := "TCP service discovery scan"
-		wTCP := NewWorker("nmap", nil, nmap.TCP, desc)
+		wTCP := wr.NewWorkerNoService(nmapBin, nil, nmap.TCP, desc)
 		wTCP.Args = tcpCmd.ToArgList()
 
 		// Configure UDP command
-		udpCmd := nmap.NewCommand(nmap.UDP, "", nil)
+		udpCmd := nmap.NewCommand(nmap.UDP)
 		udpCmd.Add().
 			MinHostGroup(100).
 			MinRate(150).
@@ -79,7 +79,7 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) {
 			TopPorts(1000)
 
 		desc = "UDP service discovery scan"
-		wUDP := NewWorker("nmap", nil, nmap.UDP, desc)
+		wUDP := wr.NewWorkerNoService(nmapBin, nil, nmap.UDP, desc)
 		wUDP.Args = udpCmd.ToArgList()
 
 		workers := []models.Worker{
@@ -103,7 +103,8 @@ func (wr *wranglerRepository) ServiceEnumeration(project *models.Project) {
 	}
 }
 
-func (wr *wranglerRepository) StaticScanners(project *models.Project, workers []models.Worker) {
+// staticScanners are defined as scans within the YAML config file which already have ports assigned and do not require modification.
+func (wr *wranglerRepository) staticScanners(workers []models.Worker) {
 	var count = 0
 	for {
 		if discoveryDone.Load() && wr.staticTargets.Len() == 0 {
@@ -130,7 +131,9 @@ func (wr *wranglerRepository) StaticScanners(project *models.Project, workers []
 	}
 }
 
-func (wr *wranglerRepository) TemplateScanners(project *models.Project, workers []models.Worker) {
+// TemplateScanners are defined as scans within the YAML config file which do not have ports pre-assigned.
+// These scans will be dynamically allocated to target services based on the YAML 'service' field value and aliases
+func (wr *wranglerRepository) templateScanners(workers []models.Worker) {
 	for {
 		if serviceEnumDone.Load() && wr.templateTargets.Len() == 0 && wr.serviceEnum.Len() == 0 {
 			fmt.Println("[*] Template scanners completed")

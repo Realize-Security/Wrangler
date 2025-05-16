@@ -1,3 +1,16 @@
+service-aliases:
+    - services: "smb"
+      aliases: ["microsoft-ds", "netbios-ssn", "cifs", "samba"]
+
+    - services: "ssh"
+      aliases: ["openssh", "ssh2", "secure-shell", "sftp"]
+
+    - services: "http"
+      aliases: ["www", "http-alt", "websocket", "https"]
+
+    - services: "ftp"
+      aliases: ["sftp", "ftps"]
+
 scan-collection:
   - scan-item:
       tool: "nmap"
@@ -32,7 +45,7 @@ scan-collection:
 
   - scan-item:
       description: "UDP SNMP all except brute on default 161"
-      service: "snmp"
+      services: ["snmp"]
       tool: "nmap"
       args: [ "-sU", "--script", "snmp-* and not snmp-brute.nse", "-p", "161" ]
       protocol: "udp"
@@ -40,35 +53,41 @@ scan-collection:
   - scan-item:
       description: "TCP all ports for SSH algos"
       tool: "nmap"
+      services: ["ssh"]
       args: [ "-sT", "--script", "ssh2-enum-algos" ]
       protocol: "tcp"
 
   - scan-item:
-        description: "TCP all ports for SSH all except algos"
-        tool: "nmap"
-        args: [ "-sT", "--script", "ssh-* and not (ssh2-enum-algos or ssh-brute)" ]
-        protocol: "tcp"
+      description: "TCP all ports for SSH all except algos"
+      tool: "nmap"
+      services: ["ssh"]
+      args: [ "-sT", "--script", "ssh-* and not (ssh2-enum-algos or ssh-brute)" ]
+      protocol: "tcp"
 
   - scan-item:
       description: "TCP FTP scripts on all ports"
       tool: "nmap"
+      services: ["ftp"]
       args: [ "-sT", "--script", "ftp-* and not ftp-brute" ]
       protocol: "tcp"
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
       tool: "nmap"
+      services: ["rdp"]
       args: [ "-sT", "--script", "rdp-*" ]
       protocol: "tcp"
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
       tool: "nmap"
+      services: ["smb"]
       args: [ "-sT", "--script", "smb-* and not smb-brute.nse" ]
       protocol: "tcp"
 
   - scan-item:
       description: "UDP NTP scripts on all ports"
       tool: "nmap"
+      services: ["ntp"]
       args: [ "-sU", "--script", "ntp-info,ntp-monlist" ]
       protocol: "udp"

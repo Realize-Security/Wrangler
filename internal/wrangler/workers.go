@@ -21,14 +21,26 @@ import (
 	"time"
 )
 
-// NewWorker creates a new worker with automatically generated ID and initialized channels
-func NewWorker(command string, args []string, protocol, description string) models.Worker {
+// NewWorkerNoService creates a new worker NOT mapped to a service
+func (wr *wranglerRepository) NewWorkerNoService(tool string, args []string, protocol, description string) models.Worker {
+	return wr.returnWorkerInstance(tool, args, protocol, description, nil)
+}
+
+// NewWorkerWithService creates a new worker mapped to a specific service
+func (wr *wranglerRepository) NewWorkerWithService(tool string, args []string, protocol, description string, targetService []string) models.Worker {
+	return wr.returnWorkerInstance(tool, args, protocol, description, targetService)
+}
+
+// returnWorkerInstance returns
+func (wr *wranglerRepository) returnWorkerInstance(tool string, args []string, protocol, description string, targetService []string) models.Worker {
+	wr.appendExclusions(&args)
 	return models.Worker{
-		ID:          uuid.Must(uuid.NewUUID()),
-		Command:     command,
-		Args:        args,
-		Protocol:    protocol,
-		Description: description,
+		ID:            uuid.Must(uuid.NewUUID()),
+		Tool:          tool,
+		Args:          args,
+		Protocol:      protocol,
+		Description:   description,
+		TargetService: targetService,
 
 		Started:  time.Time{},
 		Finished: time.Time{},
@@ -37,6 +49,12 @@ func NewWorker(command string, args []string, protocol, description string) mode
 		WorkerResponse: make(chan string, 1),
 		ErrorChan:      make(chan error, 1),
 		XMLPathsChan:   make(chan string, 1),
+	}
+}
+
+func (wr *wranglerRepository) appendExclusions(args *[]string) {
+	if project.ExcludeScopeFile != "" {
+		*args = append(*args, "--exclude-file", project.ExcludeScopeFile)
 	}
 }
 
@@ -61,7 +79,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 			return
 		}
 
-		var workerWg sync.WaitGroup // Separate waitgroup for workers
+		var workerWg sync.WaitGroup
 		log.Printf("[*] Starting %d workers", len(workers))
 		for i := range workers {
 			w := &workers[i]
@@ -75,15 +93,15 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 				reportPath := path.Join(project.ReportDirParent, reportName)
 				w.XMLReportPath = reportPath + ".xml"
 
-				cmd := nmap.NewCommand("", "", nil)
+				cmd := nmap.NewCommand("")
 				cmd.Add().
 					InputFile(localPath).
 					OutputAll(reportPath)
 				args = append(args, cmd.ToArgList()...)
-
-				if project.ExcludeScopeFile != "" {
-					cmd.Add().ExcludeFile(project.ExcludeScopeFile)
-				}
+				//
+				//if project.ExcludeScopeFile != "" {
+				//	cmd.Add().ExcludeFile(project.ExcludeScopeFile)
+				//}
 				runWorker(w, args)
 			}(w, f)
 		}
@@ -94,58 +112,75 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 	return
 }
 
-// determineAndAssignScanPorts configures port scanning settings for a worker based on target batch requirements.
-//
-// The function determines which TCP and/or UDP ports a worker should scan based on the worker's
-// configured protocol (TCP, UDP, or both) and the ports specified in the target batch. If no ports
-// are specified for a protocol that the worker is configured to use, default port settings are applied:
-// - For TCP: All ports are set to be scanned
-// - For UDP: Top 1000 most common ports are set to be scanned
-//
-// If ports are already hardcoded in the worker configuration, the function returns without making changes.
-//
-// Parameters:
-//   - w: Pointer to a worker model containing protocol configuration and where port settings will be stored
-//   - batch: Slice of target models from which to extract unique port specifications
-//
-// The function handles four main cases:
-//  1. TCP ports required but none specified in targets
-//  2. TCP ports specified and worker configured for TCP scanning
-//  3. UDP ports required but none specified in targets
-//  4. UDP ports specified and worker configured for UDP scanning
-//
-// Port settings are formatted according to nmap command requirements and stored in the worker model.
 func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 	if portsAreHardcoded(w) {
 		return
 	}
-
 	var udp []string
 	var tcp []string
+	// If worker has targetService specified, filter ports by service
+	if w.TargetService != nil && len(w.TargetService) > 0 {
+		targetServiceStr := strings.Join(w.TargetService, ", ")
 
-	tcpPorts := getUniquePortsForTargets(targets, nmap.TCP)
-	if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
-		fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
-		cmd := nmap.NewCommand("", "", nil)
-		cmd.Add().AllPorts()
-		tcp = cmd.ToArgList()
-	} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
-		t := "T:" + strings.Join(tcpPorts, ",")
-		tcp = []string{t}
-		appendPorts(tcp, udp, w)
+		tcpPorts := getUniquePortsForTargetsAndService(targets, nmap.TCP, w.TargetService)
+		if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && len(tcpPorts) > 0 {
+			t := nmap.TCPPortPrefix + strings.Join(tcpPorts, ",")
+			tcp = []string{t}
+		} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
+			fmt.Println("[!] No TCP ports found for services: " + targetServiceStr)
+		}
+
+		udpPorts := getUniquePortsForTargetsAndService(targets, nmap.UDP, w.TargetService)
+		if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && len(udpPorts) > 0 {
+			u := nmap.UDPPortPrefix + strings.Join(udpPorts, ",")
+			udp = []string{u}
+		} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
+			fmt.Println("[!] No UDP ports found for services: " + targetServiceStr)
+		}
+	} else {
+		// Default implementation for workers without a target service
+		tcpPorts := getUniquePortsForTargets(targets, nmap.TCP)
+		if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
+			fmt.Println("[!] TCP ports nil or empty. setting all TCP ports")
+			cmd := nmap.NewCommand("")
+			cmd.Add().AllPorts()
+			tcp = cmd.ToArgList()
+		} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
+			t := nmap.TCPPortPrefix + strings.Join(tcpPorts, ",")
+			tcp = []string{t}
+		}
+
+		udpPorts := getUniquePortsForTargets(targets, nmap.UDP)
+		if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
+			fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
+			cmd := nmap.NewCommand("")
+			cmd.Add().TopPorts(1000)
+			udp = cmd.ToArgList()
+		} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
+			u := nmap.UDPPortPrefix + strings.Join(udpPorts, ",")
+			udp = []string{u}
+		}
+	}
+	// Call appendPorts once at the end with complete tcp and udp lists
+	appendPorts(tcp, udp, w)
+}
+
+// New helper function to get unique ports for a specific service
+func getUniquePortsForTargetsAndService(batch []*models.Target, protocol string, targetServices []string) []string {
+	uniquePorts := make(map[string]bool)
+	for _, host := range batch {
+		for _, port := range host.Ports {
+			if isValidPort(port.PortID) && port.Protocol == protocol && serviceMatches(port.Service, targetServices) {
+				uniquePorts[port.PortID] = true
+			}
+		}
 	}
 
-	udpPorts := getUniquePortsForTargets(targets, nmap.UDP)
-	if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
-		fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
-		cmd := nmap.NewCommand("", "", nil)
-		cmd.Add().TopPorts(1000)
-		udp = cmd.ToArgList()
-	} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
-		u := "U:" + strings.Join(udpPorts, ",")
-		udp = []string{u}
-		appendPorts(tcp, udp, w)
+	ports := make([]string, 0, len(uniquePorts))
+	for key := range uniquePorts {
+		ports = append(ports, key)
 	}
+	return ports
 }
 
 func portsAreHardcoded(worker *models.Worker) bool {
@@ -208,7 +243,7 @@ func isValidPort(port string) bool {
 func runWorker(w *models.Worker, args []string) {
 	log.Printf("[worker-%s] Starting with args: %v", w.Description, args)
 
-	c := exec.Command(w.Command, args...)
+	c := exec.Command(w.Tool, args...)
 	output, err := c.CombinedOutput()
 
 	if w.WorkerResponse != nil {
@@ -250,7 +285,7 @@ func extractHostIPs(batch []*models.Target) []string {
 
 // runCommandCtx executes cmdName with args in its own process group and returns the cmd object, combined stdout/stderr, and error.
 func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (cmd *exec.Cmd, stdout, stderr chan string, errs chan error, startErr error) {
-	cmdName := worker.Command
+	cmdName := worker.Tool
 	cmd = exec.CommandContext(ctx, cmdName, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
 	stdout = make(chan string, 1)
@@ -266,7 +301,7 @@ func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (c
 		return cmd, nil, nil, nil, fmt.Errorf("stderr pipe failed: %w", err)
 	}
 
-	log.Printf("Starting %s with args %v for worker %d", cmdName, args, worker.ID)
+	log.Printf("Starting %s with args %v for worker %s", cmdName, args, worker.ID.String())
 	if startErr = cmd.Start(); startErr != nil {
 		return cmd, nil, nil, nil, startErr
 	}

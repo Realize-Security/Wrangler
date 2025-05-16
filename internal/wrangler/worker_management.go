@@ -66,22 +66,21 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 		w := &workers[i]
 		wg.Add(1)
 		go func(w *models.Worker) {
-			id := w.ID.String()
-			log.Printf("[*] Worker %s: Routine started", id)
+			log.Printf("[*] Worker %s: Routine started", w.ID.String())
 			defer func() {
 				wg.Done()
-				log.Printf("[*] Worker %s: Routine completed", id)
+				log.Printf("[*] Worker %s: Routine completed", w.ID.String())
 			}()
 
 			xmlPath, ok := <-w.XMLPathsChan
 			if !ok {
-				log.Printf("[*] XMLPathsChan closed for worker %s", id)
+				log.Printf("[*] XMLPathsChan closed for worker %s", w.ID.String())
 				return
 			}
 
 			nmapRun, err := nmap.ReadNmapXML(xmlPath)
 			if err != nil {
-				log.Printf("[!] Unable to parse XML file %s for worker %s: %v", xmlPath, id, err)
+				log.Printf("[!] Unable to parse XML file %s for worker %d: %v", xmlPath, w.ID, err)
 				w.ErrorChan <- err
 				return
 			}
@@ -142,16 +141,16 @@ func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh 
 func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 	for _, w := range workers {
 		if w.CancelFunc != nil {
-			log.Printf("Canceling context for worker %d", w.ID)
+			log.Printf("Canceling context for worker %s", w.ID.String())
 			w.CancelFunc()
 		}
 		if w.UserCommand != nil {
 			select {
 			case w.UserCommand <- WorkerStop:
-				log.Printf("Sent STOP to worker %d", w.ID)
+				log.Printf("Sent STOP to worker %s", w.ID.String())
 
 			case <-time.After(1 * time.Second):
-				log.Printf("Timeout sending STOP to worker %d", w.ID)
+				log.Printf("Timeout sending STOP to worker %s", w.ID.String())
 			}
 		}
 	}
@@ -186,8 +185,8 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
 					errCh <- fmt.Errorf(
-						"worker %d encountered an error: %s, stderr: %s",
-						w.ID, workerErr.Error(), w.StdError,
+						"worker %s encountered an error: '%s', stderr: '%s'",
+						w.ID.String(), workerErr.Error(), w.StdError,
 					)
 				}
 			}
@@ -230,18 +229,18 @@ func listProcessesByPGID(pgid int) ([]int, error) {
 
 // GracefulCloseDown gracefully shuts down by signaling to stop discovery
 // and service enumeration, then draining all registries
-func (w *wranglerRepository) GracefulCloseDown() {
+func (wr *wranglerRepository) GracefulCloseDown() {
 	discoveryDone.Store(true)
 	serviceEnumDone.Store(true)
 
 	log.Println("Starting graceful shutdown")
 
-	drainRegistryWorker(w.staticWorkers, "Static Workers")
-	drainRegistryWorker(w.templateWorkers, "Template Workers")
+	drainRegistryWorker(wr.staticWorkers, "Static Workers")
+	drainRegistryWorker(wr.templateWorkers, "Template Workers")
 
-	drainRegistryTarget(w.serviceEnum, "Service Enumeration")
-	drainRegistryTarget(w.staticTargets, "Static Targets")
-	drainRegistryTarget(w.templateTargets, "Template Targets")
+	drainRegistryTarget(wr.serviceEnum, "Service Enumeration")
+	drainRegistryTarget(wr.staticTargets, "Static Targets")
+	drainRegistryTarget(wr.templateTargets, "Template Targets")
 
 	log.Println("Graceful shutdown completed")
 }
@@ -275,7 +274,7 @@ func drainRegistryWorker(registry *concurrency.Registry[models.Worker], name str
 		for _, worker := range batch {
 			// Cancel the context if it exists
 			if worker.CancelFunc != nil {
-				log.Printf("Canceling context for worker %d", worker.ID)
+				log.Printf("Canceling context for worker %S", worker.ID.String())
 				worker.CancelFunc()
 			}
 
@@ -297,9 +296,9 @@ func drainRegistryWorker(registry *concurrency.Registry[models.Worker], name str
 			// If worker has a command that's still running, try to kill the process group
 			if worker.Cmd != nil && worker.Cmd.Process != nil {
 				pgid := worker.Cmd.Process.Pid
-				log.Printf("Attempting to kill process group for worker %d (PGID: %d)", worker.ID, pgid)
+				log.Printf("Attempting to kill process group for worker %s (PGID: %d)", worker.ID.String(), pgid)
 				if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-					log.Printf("Failed to kill process group for worker %d: %v", worker.ID, err)
+					log.Printf("Failed to kill process group for worker %s: %v", worker.ID.String(), err)
 				}
 			}
 		}
