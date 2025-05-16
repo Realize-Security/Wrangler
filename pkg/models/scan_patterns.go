@@ -14,6 +14,6 @@ type ScanDetails struct {
 	Tool          string   `yaml:"tool"`
 	Protocol      string   `yaml:"protocol"`
 	Args          []string `yaml:"args"`
-	TargetService string   `yaml:"service"`
+	TargetService []string `yaml:"services"`
 	Description   string   `yaml:"description"`
 }

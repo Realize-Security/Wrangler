@@ -2,25 +2,34 @@ package serializers
 
 import (
 	"Wrangler/pkg/models"
-	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
 )
 
-func LoadScansFromYAML(filepath string) ([]*models.ScanDetails, error) {
-	data, err := os.ReadFile(filepath)
+func LoadScansFromYAML(filePath string) ([]models.ScanDetails, *models.ServiceAliasConfig, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading pattern file: %v", err)
+		return nil, nil, err
 	}
 
-	var config models.ScanConfig
+	var config struct {
+		ServiceAliases []models.ServiceAlias `yaml:"service-aliases"`
+		Scans          []struct {
+			ScanItem models.ScanDetails `yaml:"scan-item"`
+		} `yaml:"scan-collection"`
+	}
+
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("error parsing pattern file: %v", err)
+		return nil, nil, err
 	}
 
-	patterns := make([]*models.ScanDetails, 0, len(config.Scans))
-	for _, entry := range config.Scans {
-		patterns = append(patterns, &entry.ScanItem)
+	scans := make([]models.ScanDetails, 0, len(config.Scans))
+	for _, item := range config.Scans {
+		scans = append(scans, item.ScanItem)
 	}
-	return patterns, nil
+
+	serviceConfig := &models.ServiceAliasConfig{
+		Aliases: config.ServiceAliases,
+	}
+	return scans, serviceConfig, nil
 }

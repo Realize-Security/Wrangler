@@ -69,7 +69,7 @@ func (wr *wranglerRepository) serviceEnumeration(project *models.Project) {
 			MaxRetries(2)
 
 		desc := "TCP service discovery scan"
-		wTCP := NewWorker("nmap", nil, nmap.TCP, desc)
+		wTCP := wr.NewWorkerNoService("nmap", nil, nmap.TCP, desc)
 		wTCP.Args = tcpCmd.ToArgList()
 
 		// Configure UDP command
@@ -81,7 +81,7 @@ func (wr *wranglerRepository) serviceEnumeration(project *models.Project) {
 			TopPorts(1000)
 
 		desc = "UDP service discovery scan"
-		wUDP := NewWorker("nmap", nil, nmap.UDP, desc)
+		wUDP := wr.NewWorkerNoService("nmap", nil, nmap.UDP, desc)
 		wUDP.Args = udpCmd.ToArgList()
 
 		workers := []models.Worker{

@@ -31,6 +31,7 @@ type Worker struct {
 	Args          []string
 	Protocol      string
 	Target        string
+	TargetService []string
 	Description   string
 	XMLReportPath string
 

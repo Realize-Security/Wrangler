@@ -141,16 +141,16 @@ func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh 
 func (wr *wranglerRepository) stopWorkers(workers []models.Worker) {
 	for _, w := range workers {
 		if w.CancelFunc != nil {
-			log.Printf("Canceling context for worker %d", w.ID)
+			log.Printf("Canceling context for worker %s", w.ID.String())
 			w.CancelFunc()
 		}
 		if w.UserCommand != nil {
 			select {
 			case w.UserCommand <- WorkerStop:
-				log.Printf("Sent STOP to worker %d", w.ID)
+				log.Printf("Sent STOP to worker %s", w.ID.String())
 
 			case <-time.After(1 * time.Second):
-				log.Printf("Timeout sending STOP to worker %d", w.ID)
+				log.Printf("Timeout sending STOP to worker %s", w.ID.String())
 			}
 		}
 	}

@@ -23,10 +23,11 @@ var (
 	discoveryDone   atomic.Bool
 	serviceEnumDone atomic.Bool
 
-	scopeDir    = "discovered_scope"
-	inScopeFile = "in_scope.txt"
-	excludeFile = "out_of_scope.txt"
-	batchSize   = 200
+	scopeDir            = "discovered_scope"
+	inScopeFile         = "in_scope.txt"
+	excludeFile         = "out_of_scope.txt"
+	batchSize           = 200
+	serviceAliasManager *models.ServiceAliasManager
 
 	// Channels
 	sigCh = make(chan os.Signal, 1)
@@ -158,20 +159,27 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 func (wr *wranglerRepository) loadWorkers() {
 	static := make([]models.Worker, 0)
 	templated := make([]models.Worker, 0)
-	scans, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+
+	// Load scans and service aliases from YAML
+	scans, aliases, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
 		log.Printf("[!] Unable to load scans: %s", err)
 		panic(err.Error())
 	}
 
-	log.Printf("[*] Loaded %d scans from YAML", len(scans))
+	// Initialize the service alias manager
+	initializeServiceAliases(aliases.Aliases)
+
+	log.Printf("[*] Loaded %d scans and %d service aliases from YAML",
+		len(scans), len(aliases.Aliases))
 
 	var workers []models.Worker
 	for _, s := range scans {
-		w := NewWorker(s.Tool, s.Args, s.Protocol, s.Description)
+		w := wr.NewWorkerWithService(s.Tool, s.Args, s.Protocol, s.Description, s.TargetService)
 		workers = append(workers, w)
 	}
 
+	// Rest of your existing function...
 	for _, worker := range workers {
 		if portsAreHardcoded(&worker) {
 			static = append(static, worker)
@@ -179,10 +187,26 @@ func (wr *wranglerRepository) loadWorkers() {
 			templated = append(templated, worker)
 		}
 	}
-
 	wr.staticWorkers.AddAll(static)
 	log.Printf("[*] Loaded %d static workers", len(static))
-
 	wr.templateWorkers.AddAll(templated)
 	log.Printf("[*] Loaded %d templated workers", len(templated))
+}
+
+func initializeServiceAliases(aliases []models.ServiceAlias) {
+	serviceAliasManager = NewServiceAliasManager(aliases)
+}
+
+func serviceMatches(service models.Service, targetServices []string) bool {
+	if len(targetServices) == 0 {
+		return false
+	}
+	serviceName := service.Name
+	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
+}
+
+// LoadServiceAliasesFromYAML loads service aliases
+func LoadServiceAliasesFromYAML(filePath string) (*models.ServiceAliasConfig, error) {
+	_, serviceAliasConfig, err := serializers.LoadScansFromYAML(filePath)
+	return serviceAliasConfig, err
 }
