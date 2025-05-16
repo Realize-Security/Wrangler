@@ -44,6 +44,7 @@ func (wr *wranglerRepository) startScanProcess(inScope []string) {
 func (wr *wranglerRepository) serviceEnumeration() {
 	var wg sync.WaitGroup
 	serviceEnumDone.Store(false)
+	nmapBin := getBinaryPath(nmap.BinaryName)
 	for {
 		if discoveryDone.Load() && wr.serviceEnum.Len() == 0 {
 			fmt.Println("[*] Static scanners completed")
@@ -66,7 +67,7 @@ func (wr *wranglerRepository) serviceEnumeration() {
 			AllPorts()
 
 		desc := "TCP service discovery scan"
-		wTCP := wr.NewWorkerNoService(nmap.BinaryName, nil, nmap.TCP, desc)
+		wTCP := wr.NewWorkerNoService(nmapBin, nil, nmap.TCP, desc)
 		wTCP.Args = tcpCmd.ToArgList()
 
 		// Configure UDP command
@@ -78,7 +79,7 @@ func (wr *wranglerRepository) serviceEnumeration() {
 			TopPorts(1000)
 
 		desc = "UDP service discovery scan"
-		wUDP := wr.NewWorkerNoService(nmap.BinaryName, nil, nmap.UDP, desc)
+		wUDP := wr.NewWorkerNoService(nmapBin, nil, nmap.UDP, desc)
 		wUDP.Args = udpCmd.ToArgList()
 
 		workers := []models.Worker{

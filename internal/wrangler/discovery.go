@@ -44,7 +44,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir st
 		// TODO: Refactor to use NewWorkerNoService() function
 		workers = append(workers, models.Worker{
 			ID:             uuid.Must(uuid.NewUUID()),
-			Tool:           nmap.BinaryName,
+			Tool:           getBinaryPath(nmap.BinaryName),
 			Args:           args,
 			UserCommand:    make(chan string, 1),
 			WorkerResponse: make(chan string),
@@ -67,7 +67,7 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 	discoveryDone.Store(false)
 	for i := range workers {
 		w := &workers[i]
-		w.Tool = nmap.BinaryName
+		w.Tool = getBinaryPath(nmap.BinaryName)
 
 		log.Println("[*] Host discovery started")
 		go func(dw *models.Worker) {

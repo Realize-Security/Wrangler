@@ -30,6 +30,9 @@ var (
 	batchSize           = 200
 	serviceAliasManager *models.ServiceAliasManager
 
+	// Mao scan tools to their binary path in the PATH variable
+	binaries = make(map[string]string)
+
 	// Channels
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
@@ -222,6 +225,7 @@ func validateScanToolBinaries(scans []models.ScanDetails) {
 			log.Fatalf("[!] Binary '%s' does not appear to be installed': '%v'", key, bin.Error)
 		}
 		if _, exists := found[bin.Name]; !exists {
+			binaries[bin.Name] = bin.PathInPATH
 			found[key] = bin
 		}
 	}
@@ -257,4 +261,8 @@ func validateScanToolBinaries(scans []models.ScanDetails) {
 
 		log.Println()
 	}
+}
+
+func getBinaryPath(name string) string {
+	return binaries[name]
 }
