@@ -40,7 +40,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, excludeFile
 			MaxRetries(2)
 		args := cmd.ToArgList()
 
-		// TODO: Refactor to use NewWorker() function
+		// TODO: Refactor to use NewWorkerNoService() function
 		workers = append(workers, models.Worker{
 			ID:             uuid.Must(uuid.NewUUID()),
 			Command:        "nmap",
