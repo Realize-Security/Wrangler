@@ -105,9 +105,9 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 				runWorker(w, args)
 			}(w, f)
 		}
-		log.Printf("[*] Worker %s run initiated", taskId)
+		log.Printf("[*] Worker %s: Run initiated", taskId)
 		workerWg.Wait()
-		log.Printf("[*] Worker %s completed", taskId)
+		log.Printf("[*] Worker %s: Run completed", taskId)
 	}()
 	return
 }
@@ -265,7 +265,6 @@ func runWorker(w *models.Worker, args []string) {
 			}
 		} else {
 			w.XMLPathsChan <- xmlPath
-			log.Printf("[worker-%s] Sent XML path: %s", w.Description, xmlPath)
 		}
 	}
 
