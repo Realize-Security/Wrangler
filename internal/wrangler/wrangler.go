@@ -171,6 +171,7 @@ func (wr *wranglerRepository) loadWorkers() {
 		panic(err.Error())
 	}
 
+	validateScanToolBinaries(scans)
 	initializeServiceAliases(aliases.Aliases)
 
 	log.Printf("[*] Loaded %d scans and %d service aliases from YAML",
@@ -205,4 +206,55 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 	}
 	serviceName := service.Name
 	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
+}
+
+func validateScanToolBinaries(scans []models.ScanDetails) {
+	unique := make(map[string]bool)
+	for _, scan := range scans {
+		if exists := unique[scan.Tool]; !exists {
+			unique[scan.Tool] = true
+		}
+	}
+	found := make(map[string]helpers.BinaryInfo)
+	for key := range unique {
+		bin := helpers.FindBinary(key)
+		if bin.Error != nil {
+			log.Fatalf("[!] Binary '%s' does not appear to be installed': '%v'", key, bin.Error)
+		}
+		if _, exists := found[bin.Name]; !exists {
+			found[key] = bin
+		}
+	}
+
+	if len(found) > 0 {
+		log.Println("==== Installed Binaries ====")
+	}
+
+	log.Println("==== Validate binaries and paths ====")
+	log.Print("PATH")
+	log.Printf("  ├─ $PATH: %s", os.Getenv("PATH"))
+	for _, bin := range found {
+		log.Printf("Binary: %s", bin.Name)
+		log.Printf("  ├─ Path in PATH: %s", bin.PathInPATH)
+		log.Printf("  ├─ Real Path: %s", bin.RealPath)
+		log.Printf("  ├─ Is Symlink: %t", bin.IsSymlink)
+
+		if bin.PackageOwner != "" {
+			log.Printf("  ├─ Package Owner: %s", bin.PackageOwner)
+		}
+		if bin.Distribution != "" {
+			log.Printf("  ├─ Distribution: %s", bin.Distribution)
+			if bin.DistVersion != "" {
+				log.Printf("  │  └─ Version: %s", bin.DistVersion)
+			}
+		}
+
+		if bin.InstallSource != "" {
+			log.Printf("  └─ Install Source: %s", bin.InstallSource)
+		} else {
+			log.Println("  └─ Install Source: Unknown")
+		}
+
+		log.Println()
+	}
 }
