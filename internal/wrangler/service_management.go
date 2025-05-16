@@ -13,11 +13,9 @@ func NewServiceAliasManager(aliases []models.ServiceAlias) *models.ServiceAliasM
 
 	for _, alias := range aliases {
 		service := strings.ToLower(alias.Service)
-		// Add the service name as its own alias
 		manager.AliasMap[service] = service
 		manager.ServiceMap[service] = append(manager.ServiceMap[service], service)
 
-		// Add all aliases for this service
 		for _, aliasName := range alias.Aliases {
 			aliasLower := strings.ToLower(aliasName)
 			manager.AliasMap[aliasLower] = service
