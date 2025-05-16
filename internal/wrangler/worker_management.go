@@ -185,8 +185,8 @@ func (wr *wranglerRepository) DrainWorkerErrors(workers []models.Worker, errCh c
 			for workerErr := range w.ErrorChan {
 				if workerErr != nil {
 					errCh <- fmt.Errorf(
-						"worker %d encountered an error: %s, stderr: %s",
-						w.ID, workerErr.Error(), w.StdError,
+						"worker %s encountered an error: '%s', stderr: '%s'",
+						w.ID.String(), workerErr.Error(), w.StdError,
 					)
 				}
 			}
