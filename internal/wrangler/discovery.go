@@ -26,7 +26,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir st
 
 		cmd := nmap.NewCommand("-sn")
 		cmd.Add().
-			Custom("-PS22,80,443,3389", "").
+			Custom("-PS21,22,80,443,3389", "").
 			Custom("-PA80,443", "").
 			Custom("-PU40125", "").
 			Custom("-PY80,443", "").
@@ -44,7 +44,7 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir st
 		// TODO: Refactor to use NewWorkerNoService() function
 		workers = append(workers, models.Worker{
 			ID:             uuid.Must(uuid.NewUUID()),
-			Tool:           "nmap",
+			Tool:           nmap.BinaryName,
 			Args:           args,
 			UserCommand:    make(chan string, 1),
 			WorkerResponse: make(chan string),
@@ -67,7 +67,7 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 	discoveryDone.Store(false)
 	for i := range workers {
 		w := &workers[i]
-		w.Tool = "nmap"
+		w.Tool = nmap.BinaryName
 
 		log.Println("[*] Host discovery started")
 		go func(dw *models.Worker) {

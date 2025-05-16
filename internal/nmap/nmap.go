@@ -15,6 +15,7 @@ var (
 )
 
 const (
+	BinaryName    = "/usr/bin/nmap"
 	TCP           = "tcp"
 	UDP           = "udp"
 	TCPandUDP     = "both"
