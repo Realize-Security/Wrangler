@@ -43,7 +43,7 @@ type WranglerRepository interface {
 	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess(project *models.Project, inScope []string, exclude string)
-	TemplateScanners(project *models.Project, workers []models.Worker)
+	templateScanners(project *models.Project, workers []models.Worker)
 }
 
 // wranglerRepository is our concrete implementation of the interface.
