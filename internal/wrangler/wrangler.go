@@ -19,6 +19,7 @@ import (
 const WorkerStop = "STOP"
 
 var (
+	project *models.Project
 	// Atomics
 	discoveryDone   atomic.Bool
 	serviceEnumDone atomic.Bool
@@ -39,12 +40,12 @@ type WranglerRepository interface {
 	NewProject() *models.Project
 	ProjectInit(project *models.Project)
 	setupInternal(project *models.Project)
-	DiscoveryScan(workers []models.Worker, exclude string, wg *sync.WaitGroup)
+	DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup)
 	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target)
-	DiscoveryWorkersInit(inScope []string, excludeFile string, scopeDir string, project *models.Project)
+	DiscoveryWorkersInit(inScope []string, scopeDir string)
 	FlattenScopes(paths string) ([]string, error)
-	startScanProcess(project *models.Project, inScope []string, exclude string)
-	templateScanners(project *models.Project, workers []models.Worker)
+	startScanProcess(inScope []string)
+	templateScanners(workers []models.Worker)
 }
 
 // wranglerRepository is our concrete implementation of the interface.
@@ -72,7 +73,7 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 // NewProject creates a new Project (not yet started).
 func (wr *wranglerRepository) NewProject() *models.Project {
 
-	project := &models.Project{
+	project = &models.Project{
 		Name:             wr.cli.ProjectName,
 		ExcludeScopeFile: wr.cli.ScopeExclude,
 		ReportDirParent:  wr.cli.Output,
@@ -126,6 +127,10 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 			return
 		}
 		exclude, err = files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
+		if err != nil {
+			os.Exit(1)
+		}
+		project.ExcludeScopeFile = exclude
 	}
 
 	defer func() {
@@ -153,21 +158,19 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	}
 
 	wr.loadWorkers()
-	wr.startScanProcess(project, inScope, exclude)
+	wr.startScanProcess(inScope)
 }
 
 func (wr *wranglerRepository) loadWorkers() {
 	static := make([]models.Worker, 0)
 	templated := make([]models.Worker, 0)
 
-	// Load scans and service aliases from YAML
 	scans, aliases, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
 		log.Printf("[!] Unable to load scans: %s", err)
 		panic(err.Error())
 	}
 
-	// Initialize the service alias manager
 	initializeServiceAliases(aliases.Aliases)
 
 	log.Printf("[*] Loaded %d scans and %d service aliases from YAML",
@@ -179,7 +182,6 @@ func (wr *wranglerRepository) loadWorkers() {
 		workers = append(workers, w)
 	}
 
-	// Rest of your existing function...
 	for _, worker := range workers {
 		if portsAreHardcoded(&worker) {
 			static = append(static, worker)
@@ -203,10 +205,4 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 	}
 	serviceName := service.Name
 	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
-}
-
-// LoadServiceAliasesFromYAML loads service aliases
-func LoadServiceAliasesFromYAML(filePath string) (*models.ServiceAliasConfig, error) {
-	_, serviceAliasConfig, err := serializers.LoadScansFromYAML(filePath)
-	return serviceAliasConfig, err
 }
