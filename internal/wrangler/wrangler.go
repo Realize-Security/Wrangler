@@ -86,8 +86,6 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 		TempPrefix:       ".temp",
 	}
 
-	log.Printf("[*] Project Execution ID: %s", eid.String())
-
 	if wr.cli.BatchSize > 0 {
 		fmt.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
 		batchSize = wr.cli.BatchSize
@@ -124,6 +122,9 @@ func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 // setupInternal does the initial file setup, runs optional discovery, then
 // starts the “primary” workers that read from `serviceEnum`.
 func (wr *wranglerRepository) setupInternal(project *models.Project) {
+	log.Printf("[*] Initiating Project '%s' with Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
+	logProjectDetails(project)
+
 	// Flatten & write scope exclusion
 	var excludeHosts []string
 	var exclude string
@@ -288,4 +289,27 @@ func validateScanToolBinaries(scans []models.ScanDetails) {
 
 func getBinaryPath(name string) string {
 	return binaries[name]
+}
+
+func logProjectDetails(project *models.Project) {
+	name := strings.Split(project.Name, "_")
+	log.Println("==== Project Details ====")
+	log.Printf("Project Name: %s", strings.Join(name[1:], "_"))
+	log.Printf("  ├─ Execution ID: %s", project.ExecutionID)
+	log.Printf("  ├─ In-Scope File: %s", project.InScopeFile)
+	log.Printf("  ├─ Exclude-Scope File: %s", project.ExcludeScopeFile)
+	log.Printf("  ├─ Report Directory Parent: %s", project.ReportDirParent)
+
+	if project.ProjectReportPath != "" {
+		log.Printf("  ├─ Project Report Path: %s", project.ProjectReportPath)
+	} else {
+		log.Printf("  ├─ Project Report Path: Not set")
+	}
+
+	if project.ProjectBase != "" {
+		log.Printf("  ├─ Project Base: %s", project.ProjectBase)
+	} else {
+		log.Printf("  ├─ Project Base: Not set")
+	}
+	log.Println()
 }

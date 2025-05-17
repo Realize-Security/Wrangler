@@ -37,7 +37,8 @@ func (wr *wranglerRepository) startScanProcess(inScope []string) {
 	// Step 4: Start primary scanners
 	wr.templateScanners(wr.templateWorkers.GetAll())
 
-	log.Printf("[*] Execution completed: %s", project.ExecutionID.String())
+	log.Printf("[*] Project '%s' completed Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
+	logProjectDetails(project)
 }
 
 // serviceEnumeration scans identified hosts to identify open ports and determine what services are listening
