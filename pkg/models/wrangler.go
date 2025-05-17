@@ -8,12 +8,11 @@ import (
 )
 
 type Project struct {
-	ID                int
+	ExecutionID       uuid.UUID
 	Name              string `validate:"required"`
 	InScopeFile       string `validate:"required"`
 	ExcludeScopeFile  string `validate:"required"`
 	ReportDirParent   string `validate:"required"`
-	Targets           []Target
 	ProjectReportPath string
 	ProjectBase       string
 	TempPrefix        string
@@ -26,7 +25,7 @@ type Target struct {
 
 // Worker describes a single worker’s configuration and runtime state.
 type Worker struct {
-	ID            uuid.UUID // UUIDv1
+	ID            uuid.UUID
 	Tool          string
 	Args          []string
 	Protocol      string

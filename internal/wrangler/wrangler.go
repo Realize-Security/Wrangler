@@ -7,6 +7,7 @@ import (
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
+	"github.com/google/uuid"
 	"log"
 	"os"
 	"path"
@@ -24,7 +25,7 @@ var (
 	discoveryDone   atomic.Bool
 	serviceEnumDone atomic.Bool
 
-	scopeDir            = "discovered_scope"
+	scopeDir            = "discovered"
 	inScopeFile         = "in_scope.txt"
 	excludeFile         = "out_of_scope.txt"
 	batchSize           = 200
@@ -76,12 +77,16 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 // NewProject creates a new Project (not yet started).
 func (wr *wranglerRepository) NewProject() *models.Project {
 
+	eid := uuid.Must(uuid.NewUUID())
 	project = &models.Project{
-		Name:             wr.cli.ProjectName,
+		ExecutionID:      eid,
+		Name:             eid.String() + "_" + wr.cli.ProjectName,
 		ExcludeScopeFile: wr.cli.ScopeExclude,
 		ReportDirParent:  wr.cli.Output,
 		TempPrefix:       ".temp",
 	}
+
+	log.Printf("[*] Project Execution ID: %s", eid.String())
 
 	if wr.cli.BatchSize > 0 {
 		fmt.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
@@ -97,7 +102,7 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	scopeDir = path.Join(cwd, scopeDir+"-"+project.Name)
 	project.TempPrefix = project.TempPrefix + "-" + project.Name
 
-	report := path.Join(cwd, wr.cli.Output, helpers.SpacesToUnderscores(wr.cli.ProjectName))
+	report := path.Join(cwd, wr.cli.Output, helpers.SpacesToUnderscores(project.Name))
 	err = files.CreateDir(report)
 	if err != nil {
 		fmt.Printf("[!] Failed to create report directory: %v\n", err)
