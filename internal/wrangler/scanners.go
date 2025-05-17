@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// startScanProcess kicks off scanning stage in order
-func (wr *wranglerRepository) startScanProcess(inScope []string) {
+// startScanProcess kicks off scanning stages in order
+func (wr *wranglerRepository) startScanProcess() {
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
 	if err != nil {
 		fmt.Printf("unable to create temp scope file directory: %s", err)
@@ -26,7 +26,7 @@ func (wr *wranglerRepository) startScanProcess(inScope []string) {
 	}(tempDir)
 
 	// Step 1: Run host discovery
-	wr.DiscoveryWorkersInit(inScope, tempDir)
+	wr.DiscoveryWorkersInit(project.InScopeHosts, tempDir)
 
 	// Step 2: Start static workers
 	wr.staticScanners(wr.staticWorkers.GetAll())

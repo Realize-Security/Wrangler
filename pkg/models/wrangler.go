@@ -16,6 +16,7 @@ type Project struct {
 	ProjectReportPath string
 	ProjectBase       string
 	TempPrefix        string
+	InScopeHosts      []string
 }
 
 type Target struct {

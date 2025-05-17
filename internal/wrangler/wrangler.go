@@ -31,7 +31,7 @@ var (
 	batchSize           = 200
 	serviceAliasManager *models.ServiceAliasManager
 
-	// Mao scan tools to their binary path in the PATH variable
+	// Map scan tools to their binary path in the PATH variable
 	binaries = make(map[string]string)
 
 	// Channels
@@ -48,7 +48,7 @@ type WranglerRepository interface {
 	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target, parentWg *sync.WaitGroup)
 	DiscoveryWorkersInit(inScope []string, scopeDir string)
 	FlattenScopes(paths string) ([]string, error)
-	startScanProcess(inScope []string)
+	startScanProcess()
 	templateScanners(workers []models.Worker)
 }
 
@@ -117,10 +117,11 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 
 func (wr *wranglerRepository) ProjectInit(project *models.Project) {
 	wr.setupInternal(project)
+	wr.loadWorkers()
+	wr.startScanProcess()
 }
 
-// setupInternal does the initial file setup, runs optional discovery, then
-// starts the “primary” workers that read from `serviceEnum`.
+// setupInternal initialises project resources, directories and files
 func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	log.Printf("[*] Initiating Project '%s' with Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
 	logProjectDetails(project)
@@ -183,11 +184,10 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 		project.InScopeFile = inScopePath
 		fmt.Printf("[*] Created single scope file: %s\n", project.InScopeFile)
 	}
-
-	wr.loadWorkers()
-	wr.startScanProcess(inScope)
+	project.InScopeHosts = inScope
 }
 
+// loadWorkers loads template and static scanner workers from YAML file
 func (wr *wranglerRepository) loadWorkers() {
 	static := make([]models.Worker, 0)
 	templated := make([]models.Worker, 0)
