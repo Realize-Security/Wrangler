@@ -198,9 +198,9 @@ func (wr *wranglerRepository) loadWorkers() {
 	}
 
 	for _, scope := range scoping {
-		for _, scan := range scans {
-			if scan.Tool == scope.Tool {
-				scan.ScopeArg = scope.Arg
+		for i := range scans {
+			if scans[i].Tool == scope.Tool {
+				scans[i].ScopeArg = scope.Arg
 			}
 		}
 	}
