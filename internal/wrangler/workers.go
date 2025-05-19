@@ -62,6 +62,7 @@ func (wr *wranglerRepository) returnWorkerInstance(scan *models.Scan) models.Wor
 		TargetService:      scan.TargetService,
 		IsHostDiscovery:    scan.HostDiscovery,
 		IsServiceDiscovery: scan.ServiceDiscovery,
+		ScopeArg:           scan.ScopeArg,
 
 		Started:  time.Time{},
 		Finished: time.Time{},
