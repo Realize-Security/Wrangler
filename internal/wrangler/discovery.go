@@ -6,30 +6,50 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"time"
 )
 
-// DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
 func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
-	var workers []models.Worker
-	var wg sync.WaitGroup
+	workers := wr.createDiscoveryWorkers(templates, inScope, scopeDir)
+	if len(workers) == 0 {
+		log.Println("[!] No discovery workers were initialized")
+		return
+	}
+	wr.startAndMonitorWorkers(workers)
+}
 
+func (wr *wranglerRepository) createDiscoveryWorkers(templates []models.Worker, inScope []string, scopeDir string) []models.Worker {
+	var workers []models.Worker
+
+	// Create chunk files and workers for each chunk
 	for i, chunk := range chunkSlice(inScope, batchSize) {
-		f, err := files.WriteSliceToFile(scopeDir, project.TempPrefix+"_"+strconv.Itoa(i)+".txt", chunk)
+		chunkFile, err := wr.createChunkFile(scopeDir, i, chunk)
 		if err != nil {
-			fmt.Printf("unable to create temp scope file: %s", err)
+			continue
 		}
 
-		for _, tw := range templates {
-			w := wr.DuplicateWorker(&tw)
-			scope := []string{tw.ScopeArg, f}
-			w.Args = append(w.Args, scope...)
-			workers = append(workers, tw)
+		// Create a worker from each template
+		for _, tmpl := range templates {
+			worker := wr.createWorkerFromTemplate(tmpl, chunkFile)
+			workers = append(workers, worker)
 		}
 	}
 
+	return workers
+}
+
+func (wr *wranglerRepository) createWorkerFromTemplate(template models.Worker, scopeFile string) models.Worker {
+	// Create a deep copy of the template
+	worker := wr.DuplicateWorker(&template)
+
+	// Add scope arguments
+	worker.Args = append(worker.Args, worker.ScopeArg, scopeFile)
+	return worker
+}
+
+func (wr *wranglerRepository) startAndMonitorWorkers(workers []models.Worker) {
+	var wg sync.WaitGroup
 	wg.Add(len(workers))
 
 	wr.DiscoveryScan(workers, &wg)
@@ -91,6 +111,16 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 		log.Println("[*] Host discovery complete")
 		discoveryDone.Store(true)
 	}()
+}
+
+func (wr *wranglerRepository) createChunkFile(dir string, index int, chunk []string) (string, error) {
+	filename := fmt.Sprintf("%s_%d.txt", project.TempPrefix, index)
+	path, err := files.WriteSliceToFile(dir, filename, chunk)
+	if err != nil {
+		log.Printf("[!] Unable to create temp scope file: %s", err)
+		return "", err
+	}
+	return path, nil
 }
 
 // chunkSlice splits the slice `src` into multiple slices of length `chunkSize`. The last chunk may be shorter if there aren't enough elements left.
