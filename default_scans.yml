@@ -11,7 +11,30 @@ service-aliases:
     - services: "ftp"
       aliases: ["sftp", "ftps"]
 
+scope-assignment:
+  - tool: "nmap"
+    arg: "-iL"
+    description: "Command line flag for assigning input file for Nmap."
+
 scan-collection:
+  - scan-item:
+      tool: "nmap"
+      args: [ "-sn", "-PS21,22,80,443,3389", "-PA80,443", "-PU40125","-PY80,443", "-PE", "-PP", "-PM", "-T4" ]
+      host_discovery: true
+      description: "Ping scan for initial host discovery"
+
+  - scan-item:
+      tool: "nmap"
+      args: [ "-p-" ]
+      service_discovery: true
+      description: "TCP service discovery"
+
+  - scan-item:
+      tool: "nmap"
+      args: [ "--top-ports", "1000" ]
+      service_discovery: true
+      description: "UDP service discovery"
+
   - scan-item:
       tool: "nmap"
       args: [ "--script", "vuln and not smb-vuln-*" ]
