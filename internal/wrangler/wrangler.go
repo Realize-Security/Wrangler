@@ -255,7 +255,6 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
 }
 
-// TODO: THIS
 func setToolBinPath(scans []models.Scan) error {
 	// Create map of unique tools (pre-allocated)
 	uniqueTools := make(map[string]struct{}, len(scans))
