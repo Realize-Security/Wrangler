@@ -31,9 +31,6 @@ var (
 	batchSize           = 200
 	serviceAliasManager *models.ServiceAliasManager
 
-	// Map scan tools to their binary path in the PATH variable
-	binaries = make(map[string]string)
-
 	// Channels
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
@@ -46,7 +43,7 @@ type WranglerRepository interface {
 	setupInternal(project *models.Project)
 	DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup)
 	startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target, parentWg *sync.WaitGroup)
-	DiscoveryWorkersInit(inScope []string, scopeDir string)
+	DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string)
 	FlattenScopes(paths string) ([]string, error)
 	startScanProcess()
 	templateScanners(workers []models.Worker)
@@ -54,23 +51,27 @@ type WranglerRepository interface {
 
 // wranglerRepository is our concrete implementation of the interface.
 type wranglerRepository struct {
-	cli             models.CLI
-	serviceEnum     *concurrency.Registry[models.Target]
-	staticWorkers   *concurrency.Registry[models.Worker]
-	staticTargets   *concurrency.Registry[models.Target]
-	templateWorkers *concurrency.Registry[models.Worker]
-	templateTargets *concurrency.Registry[models.Target]
+	cli                     models.CLI
+	hostDiscoveryWorkers    *concurrency.Registry[models.Worker]
+	serviceDiscoveryWorkers *concurrency.Registry[models.Worker]
+	serviceEnum             *concurrency.Registry[models.Target]
+	staticWorkers           *concurrency.Registry[models.Worker]
+	staticTargets           *concurrency.Registry[models.Target]
+	templateWorkers         *concurrency.Registry[models.Worker]
+	templateTargets         *concurrency.Registry[models.Target]
 }
 
 // NewWranglerRepository constructs our repository and sets up signals.
 func NewWranglerRepository(cli models.CLI) WranglerRepository {
 	return &wranglerRepository{
-		cli:             cli,
-		serviceEnum:     concurrency.NewRegistry[models.Target](TargetEquals),
-		staticWorkers:   concurrency.NewRegistry[models.Worker](WorkerEquals),
-		staticTargets:   concurrency.NewRegistry[models.Target](TargetEquals),
-		templateWorkers: concurrency.NewRegistry[models.Worker](WorkerEquals),
-		templateTargets: concurrency.NewRegistry[models.Target](TargetEquals),
+		cli:                     cli,
+		hostDiscoveryWorkers:    concurrency.NewRegistry[models.Worker](WorkerEquals),
+		serviceDiscoveryWorkers: concurrency.NewRegistry[models.Worker](WorkerEquals),
+		serviceEnum:             concurrency.NewRegistry[models.Target](TargetEquals),
+		staticWorkers:           concurrency.NewRegistry[models.Worker](WorkerEquals),
+		staticTargets:           concurrency.NewRegistry[models.Target](TargetEquals),
+		templateWorkers:         concurrency.NewRegistry[models.Worker](WorkerEquals),
+		templateTargets:         concurrency.NewRegistry[models.Target](TargetEquals),
 	}
 }
 
@@ -166,21 +167,17 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 			return
 		}
 
-		// Create scope directory if it doesn't exist
 		err = files.CreateDir(scopeDir)
 		if err != nil {
 			fmt.Printf("[!] Failed to create scope directory: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Write all targets to the single in-scope file
 		inScopePath, err := files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
 		if err != nil {
 			fmt.Printf("[!] Failed to write targets to file: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Update the project's InScopeFile to point to the created file
 		project.InScopeFile = inScopePath
 		fmt.Printf("[*] Created single scope file: %s\n", project.InScopeFile)
 	}
@@ -189,36 +186,63 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 
 // loadWorkers loads template and static scanner workers from YAML file
 func (wr *wranglerRepository) loadWorkers() {
+	hdw := make([]models.Worker, 0)
+	sdw := make([]models.Worker, 0)
 	static := make([]models.Worker, 0)
 	templated := make([]models.Worker, 0)
 
-	scans, aliases, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
+	scans, aliases, scoping, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
-		log.Printf("[!] Unable to load scans: %s", err)
+		log.Printf("[!] Unable to load scans: %scan", err)
 		panic(err.Error())
 	}
 
-	validateScanToolBinaries(scans)
+	for _, scope := range scoping {
+		for _, scan := range scans {
+			if scan.Tool == scope.Tool {
+				scan.ScopeArg = scope.Arg
+			}
+		}
+	}
+
+	// Check binaries are installed in PATH
+	err = setToolBinPath(scans)
+	if err != nil {
+		fmt.Printf("[!] Error encountered validating worker binaries: %s", err.Error())
+		os.Exit(1)
+	}
 	initializeServiceAliases(aliases.Aliases)
 
 	log.Printf("[*] Loaded %d scans and %d service aliases from YAML",
 		len(scans), len(aliases.Aliases))
 
 	var workers []models.Worker
-	for _, s := range scans {
-		w := wr.NewWorkerWithService(s.Tool, s.Args, s.Protocol, s.Description, s.TargetService)
+	for _, scan := range scans {
+		w := wr.NewWorkerWithService(&scan)
 		workers = append(workers, w)
 	}
 
 	for _, worker := range workers {
-		if portsAreHardcoded(&worker) {
+		if worker.IsHostDiscovery {
+			hdw = append(hdw, worker)
+		} else if worker.IsServiceDiscovery {
+			sdw = append(sdw, worker)
+		} else if portsAreHardcoded(&worker) {
 			static = append(static, worker)
 		} else {
 			templated = append(templated, worker)
 		}
 	}
+
+	wr.hostDiscoveryWorkers.AddAll(hdw)
+	log.Printf("[*] Loaded %d host discovery workers", len(hdw))
+
+	wr.serviceDiscoveryWorkers.AddAll(sdw)
+	log.Printf("[*] Loaded %d service discovery workers", len(sdw))
+
 	wr.staticWorkers.AddAll(static)
 	log.Printf("[*] Loaded %d static workers", len(static))
+
 	wr.templateWorkers.AddAll(templated)
 	log.Printf("[*] Loaded %d templated workers", len(templated))
 }
@@ -235,60 +259,82 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
 }
 
-func validateScanToolBinaries(scans []models.ScanDetails) {
-	unique := make(map[string]bool)
+// TODO: THIS
+func setToolBinPath(scans []models.Scan) error {
+	// Create map of unique tools (pre-allocated)
+	uniqueTools := make(map[string]struct{}, len(scans))
 	for _, scan := range scans {
-		if exists := unique[scan.Tool]; !exists {
-			unique[scan.Tool] = true
-		}
+		uniqueTools[scan.Tool] = struct{}{} // More efficient than bool
 	}
-	found := make(map[string]helpers.BinaryInfo)
-	for key := range unique {
-		bin := helpers.FindBinary(key)
+
+	// Find binaries for unique tools
+	toolToBin := make(map[string]helpers.BinaryInfo, len(uniqueTools))
+	uniqueBins := make(map[string]helpers.BinaryInfo)
+	var missingBinaries []string
+
+	for tool := range uniqueTools {
+		bin := helpers.FindBinary(tool)
 		if bin.Error != nil {
-			log.Fatalf("[!] Binary '%s' does not appear to be installed': '%v'", key, bin.Error)
+			missingBinaries = append(missingBinaries, fmt.Sprintf("'%s': %v", tool, bin.Error))
+			continue
 		}
-		if _, exists := found[bin.Name]; !exists {
-			binaries[bin.Name] = bin.PathInPATH
-			found[key] = bin
+
+		toolToBin[tool] = bin
+
+		// Store unique binaries for logging
+		if _, exists := uniqueBins[bin.Name]; !exists {
+			uniqueBins[bin.Name] = bin
 		}
 	}
 
-	if len(found) > 0 {
+	// Report all missing binaries at once
+	if len(missingBinaries) > 0 {
+		return fmt.Errorf("the following binaries do not appear to be installed: %s",
+			strings.Join(missingBinaries, ", "))
+	}
+
+	// Properly update the original scans
+	for i := range scans {
+		if bin, ok := toolToBin[scans[i].Tool]; ok {
+			scans[i].Tool = bin.PathInPATH
+		}
+	}
+
+	// Log installed binaries information (only if any found)
+	if len(uniqueBins) > 0 {
 		log.Println("==== Installed Binaries ====")
-	}
+		log.Println("==== Validate binaries and paths ====")
+		log.Print("PATH")
+		log.Printf("  ├─ $PATH: %s", os.Getenv("PATH"))
 
-	log.Println("==== Validate binaries and paths ====")
-	log.Print("PATH")
-	log.Printf("  ├─ $PATH: %s", os.Getenv("PATH"))
-	for _, bin := range found {
-		log.Printf("Binary: %s", bin.Name)
-		log.Printf("  ├─ Path in PATH: %s", bin.PathInPATH)
-		log.Printf("  ├─ Real Path: %s", bin.RealPath)
-		log.Printf("  ├─ Is Symlink: %t", bin.IsSymlink)
+		for _, bin := range uniqueBins {
+			log.Printf("Binary: %s", bin.Name)
+			log.Printf("  ├─ Path in PATH: %s", bin.PathInPATH)
+			log.Printf("  ├─ Real Path: %s", bin.RealPath)
+			log.Printf("  ├─ Is Symlink: %t", bin.IsSymlink)
 
-		if bin.PackageOwner != "" {
-			log.Printf("  ├─ Package Owner: %s", bin.PackageOwner)
-		}
-		if bin.Distribution != "" {
-			log.Printf("  ├─ Distribution: %s", bin.Distribution)
-			if bin.DistVersion != "" {
-				log.Printf("  │  └─ Version: %s", bin.DistVersion)
+			if bin.PackageOwner != "" {
+				log.Printf("  ├─ Package Owner: %s", bin.PackageOwner)
 			}
-		}
 
-		if bin.InstallSource != "" {
-			log.Printf("  └─ Install Source: %s", bin.InstallSource)
-		} else {
-			log.Println("  └─ Install Source: Unknown")
-		}
+			if bin.Distribution != "" {
+				log.Printf("  ├─ Distribution: %s", bin.Distribution)
+				if bin.DistVersion != "" {
+					log.Printf("  │  └─ Version: %s", bin.DistVersion)
+				}
+			}
 
-		log.Println()
+			if bin.InstallSource != "" {
+				log.Printf("  └─ Install Source: %s", bin.InstallSource)
+			} else {
+				log.Println("  └─ Install Source: Unknown")
+			}
+
+			log.Println()
+		}
 	}
-}
 
-func getBinaryPath(name string) string {
-	return binaries[name]
+	return nil
 }
 
 func logProjectDetails(project *models.Project) {

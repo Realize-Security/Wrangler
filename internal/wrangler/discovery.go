@@ -2,11 +2,9 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
-	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"strconv"
 	"sync"
@@ -14,7 +12,7 @@ import (
 )
 
 // DiscoveryWorkersInit sets up one "discovery" worker per host in `inScope`.
-func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir string) {
+func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
 	var workers []models.Worker
 	var wg sync.WaitGroup
 
@@ -24,40 +22,18 @@ func (wr *wranglerRepository) DiscoveryWorkersInit(inScope []string, scopeDir st
 			fmt.Printf("unable to create temp scope file: %s", err)
 		}
 
-		cmd := nmap.NewCommand("-sn")
-		cmd.Add().
-			Custom("-PS21,22,80,443,3389", "").
-			Custom("-PA80,443", "").
-			Custom("-PU40125", "").
-			Custom("-PY80,443", "").
-			Custom("-PE", "").
-			Custom("-PP", "").
-			Custom("-PM", "").
-			PerformanceTemplate(nmap.Aggressive).
-			InputFile(f).
-			NoResolve().
-			Verbose(nmap.VerbosityLow).
-			MaxRetries(2)
-
-		args := cmd.ToArgList()
-
-		// TODO: Refactor to use NewWorkerNoService() function
-		workers = append(workers, models.Worker{
-			ID:             uuid.Must(uuid.NewUUID()),
-			Tool:           getBinaryPath(nmap.BinaryName),
-			Args:           args,
-			UserCommand:    make(chan string, 1),
-			WorkerResponse: make(chan string),
-			ErrorChan:      make(chan error),
-			XMLPathsChan:   make(chan string),
-		})
+		for _, tw := range templates {
+			w := wr.DuplicateWorker(&tw)
+			scope := []string{tw.ScopeArg, f}
+			w.Args = append(w.Args, scope...)
+			workers = append(workers, tw)
+		}
 	}
 
 	wg.Add(len(workers))
 
 	wr.DiscoveryScan(workers, &wg)
 	wr.DiscoveryResponseMonitor(workers)
-
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
@@ -67,7 +43,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 	discoveryDone.Store(false)
 	for i := range workers {
 		w := &workers[i]
-		w.Tool = getBinaryPath(nmap.BinaryName)
 
 		log.Println("[*] Host discovery started")
 		go func(dw *models.Worker) {

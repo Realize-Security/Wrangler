@@ -7,13 +7,16 @@ type ScanConfig struct {
 }
 
 type ScanItem struct {
-	ScanItem ScanDetails `yaml:"scan-item"`
+	ScanItem Scan `yaml:"scan-item"`
 }
 
-type ScanDetails struct {
-	Tool          string   `yaml:"tool"`
-	Protocol      string   `yaml:"protocol"`
-	Args          []string `yaml:"args"`
-	TargetService []string `yaml:"services"`
-	Description   string   `yaml:"description"`
+type Scan struct {
+	Tool             string   `yaml:"tool"`
+	Protocol         string   `yaml:"protocol"`
+	Args             []string `yaml:"args"`
+	TargetService    []string `yaml:"services"`
+	Description      string   `yaml:"description"`
+	HostDiscovery    bool     `yaml:"host_discovery"`
+	ServiceDiscovery bool     `yaml:"service_discovery"`
+	ScopeArg         string
 }

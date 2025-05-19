@@ -6,30 +6,27 @@ import (
 	"os"
 )
 
-func LoadScansFromYAML(filePath string) ([]models.ScanDetails, *models.ServiceAliasConfig, error) {
+func LoadScansFromYAML(filePath string) ([]models.Scan, *models.ServiceAliasConfig, []models.ScopeAssignment, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-
 	var config struct {
-		ServiceAliases []models.ServiceAlias `yaml:"service-aliases"`
-		Scans          []struct {
-			ScanItem models.ScanDetails `yaml:"scan-item"`
+		ServiceAliases  []models.ServiceAlias    `yaml:"service-aliases"`
+		ScopeAssignment []models.ScopeAssignment `yaml:"scope-assignment"`
+		Scans           []struct {
+			ScanItem models.Scan `yaml:"scan-item"`
 		} `yaml:"scan-collection"`
 	}
-
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-
-	scans := make([]models.ScanDetails, 0, len(config.Scans))
+	scans := make([]models.Scan, 0, len(config.Scans))
 	for _, item := range config.Scans {
 		scans = append(scans, item.ScanItem)
 	}
-
 	serviceConfig := &models.ServiceAliasConfig{
 		Aliases: config.ServiceAliases,
 	}
-	return scans, serviceConfig, nil
+	return scans, serviceConfig, config.ScopeAssignment, nil
 }

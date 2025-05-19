@@ -21,25 +21,46 @@ import (
 )
 
 // NewWorkerNoService creates a new worker NOT mapped to a service
-func (wr *wranglerRepository) NewWorkerNoService(tool string, args []string, protocol, description string) models.Worker {
-	return wr.returnWorkerInstance(tool, args, protocol, description, nil)
+func (wr *wranglerRepository) NewWorkerNoService(scan *models.Scan) models.Worker {
+	return wr.returnWorkerInstance(scan)
 }
 
 // NewWorkerWithService creates a new worker mapped to a specific service
-func (wr *wranglerRepository) NewWorkerWithService(tool string, args []string, protocol, description string, targetService []string) models.Worker {
-	return wr.returnWorkerInstance(tool, args, protocol, description, targetService)
+func (wr *wranglerRepository) NewWorkerWithService(scan *models.Scan) models.Worker {
+	return wr.returnWorkerInstance(scan)
+}
+
+// DuplicateWorker duplicates an existing worker with a new ID
+func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Worker {
+	return models.Worker{
+		ID:                 uuid.Must(uuid.NewUUID()),
+		Tool:               worker.Tool,
+		Args:               worker.Args,
+		Protocol:           worker.Protocol,
+		Description:        worker.Description,
+		TargetService:      worker.TargetService,
+		IsHostDiscovery:    worker.IsHostDiscovery,
+		IsServiceDiscovery: worker.IsServiceDiscovery,
+
+		UserCommand:    make(chan string, 1),
+		WorkerResponse: make(chan string, 1),
+		ErrorChan:      make(chan error, 1),
+		XMLPathsChan:   make(chan string, 1),
+	}
 }
 
 // returnWorkerInstance returns
-func (wr *wranglerRepository) returnWorkerInstance(tool string, args []string, protocol, description string, targetService []string) models.Worker {
-	wr.appendExclusions(&args)
+func (wr *wranglerRepository) returnWorkerInstance(scan *models.Scan) models.Worker {
+	wr.appendExclusions(&scan.Args)
 	return models.Worker{
-		ID:            uuid.Must(uuid.NewUUID()),
-		Tool:          tool,
-		Args:          args,
-		Protocol:      protocol,
-		Description:   description,
-		TargetService: targetService,
+		ID:                 uuid.Must(uuid.NewUUID()),
+		Tool:               scan.Tool,
+		Args:               scan.Args,
+		Protocol:           scan.Protocol,
+		Description:        scan.Description,
+		TargetService:      scan.TargetService,
+		IsHostDiscovery:    scan.HostDiscovery,
+		IsServiceDiscovery: scan.ServiceDiscovery,
 
 		Started:  time.Time{},
 		Finished: time.Time{},

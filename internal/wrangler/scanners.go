@@ -2,7 +2,6 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
-	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"fmt"
 	"log"
@@ -26,26 +25,25 @@ func (wr *wranglerRepository) startScanProcess() {
 	}(tempDir)
 
 	// Step 1: Run host discovery
-	wr.DiscoveryWorkersInit(project.InScopeHosts, tempDir)
+	wr.DiscoveryWorkersInit(wr.hostDiscoveryWorkers.GetAll(), project.InScopeHosts, tempDir)
 
 	// Step 2: Start static workers
 	wr.staticScanners(wr.staticWorkers.GetAll())
 
 	// Step 3: Start  service enumeration
-	wr.serviceEnumeration()
+	wr.serviceEnumeration(wr.serviceDiscoveryWorkers.GetAll())
 
 	// Step 4: Start primary scanners
 	wr.templateScanners(wr.templateWorkers.GetAll())
 
-	log.Printf("[*] Project '%s' completed Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
+	log.Printf("[*] Project '%s' completed execution with ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
 	logProjectDetails(project)
 }
 
 // serviceEnumeration scans identified hosts to identify open ports and determine what services are listening
-func (wr *wranglerRepository) serviceEnumeration() {
+func (wr *wranglerRepository) serviceEnumeration(templates []models.Worker) {
 	var wg sync.WaitGroup
 	serviceEnumDone.Store(false)
-	nmapBin := getBinaryPath(nmap.BinaryName)
 
 	discoveryCompleted := false
 	emptyQueueCounter := 0 // To avoid exiting too early due to temporary empty queue
@@ -86,39 +84,16 @@ func (wr *wranglerRepository) serviceEnumeration() {
 			continue
 		}
 
+		workers := make([]models.Worker, 0)
 		targets := wr.serviceEnum.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		// Configure TCP command
-		tcpCmd := nmap.NewCommand(nmap.TCP)
-		tcpCmd.Add().
-			MinHostGroup(100).
-			MinRate(150).
-			MaxRetries(2).
-			AllPorts()
-
-		desc := "TCP service discovery scan"
-		wTCP := wr.NewWorkerNoService(nmapBin, nil, nmap.TCP, desc)
-		wTCP.Args = tcpCmd.ToArgList()
-
-		// Configure UDP command
-		udpCmd := nmap.NewCommand(nmap.UDP)
-		udpCmd.Add().
-			MinHostGroup(100).
-			MinRate(150).
-			MaxRetries(2).
-			TopPorts(1000)
-
-		desc = "UDP service discovery scan"
-		wUDP := wr.NewWorkerNoService(nmapBin, nil, nmap.UDP, desc)
-		wUDP.Args = udpCmd.ToArgList()
-
-		workers := []models.Worker{
-			wTCP,
-			wUDP,
+		for _, tw := range templates {
+			w := wr.DuplicateWorker(&tw)
+			workers = append(workers, w)
 		}
 		wg.Add(len(workers))
 
-		log.Println("[*] Starting service enumeration")
+		log.Printf("[*] Starting service enumeration with %d", len(workers))
 		wr.startWorkers(project, workers, targets, &wg)
 		wr.MonitorServiceEnum(workers)
 		wr.SetupSignalHandler(workers, sigCh)
@@ -146,15 +121,12 @@ func (wr *wranglerRepository) staticScanners(workers []models.Worker) {
 			log.Println("[*] Host discovery phase completed, continuing static scanners")
 		}
 
-		// Exit condition - only if queue is empty for multiple checks AND all batches are complete
 		if discoveryCompleted && wr.staticTargets.Len() == 0 {
 			emptyQueueCounter++
-
 			if emptyQueueCounter >= 5 && allBatchesComplete {
 				fmt.Println("[*] Static scanners completed")
 				break
 			}
-
 			time.Sleep(time.Second * 2)
 			continue
 		}
@@ -202,7 +174,7 @@ func (wr *wranglerRepository) templateScanners(workers []models.Worker) {
 	var wg sync.WaitGroup
 	serviceEnumCompleted := false
 	emptyQueueCounter := 0
-	allBatchesComplete := true // Start true, set to false when a batch starts, set back to true when all complete
+	allBatchesComplete := true
 
 	for {
 		if !serviceEnumCompleted && serviceEnumDone.Load() {

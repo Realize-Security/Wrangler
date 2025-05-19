@@ -34,6 +34,11 @@ type Worker struct {
 	TargetService []string
 	Description   string
 	XMLReportPath string
+	ScopeArg      string
+
+	// SubTypes
+	IsHostDiscovery    bool
+	IsServiceDiscovery bool
 
 	// Start/finish times and optional timeout
 	Started    time.Time
