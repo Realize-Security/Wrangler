@@ -29,4 +29,4 @@ Currently only service discovery on TCP is supported. This will have to be exten
 1. Implement SCTP support. 
 2. Rate limiting on number of concurrent batches.
 3. Implement another layer of host discovery checking for at least one open port
-4. Review host discovery nmap approach
+4. Investigate why scans are failing when no `sudo` is not used and relying on linux capabilities for nmap.
