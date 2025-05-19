@@ -1,93 +1,171 @@
 service-aliases:
-    - services: "smb"
-      aliases: ["microsoft-ds", "netbios-ssn", "cifs", "samba"]
+  - services: "smb"
+    aliases: ["microsoft-ds", "netbios-ssn", "cifs", "samba"]
+  - services: "ssh"
+    aliases: ["openssh", "ssh2", "secure-shell", "sftp"]
+  - services: "http"
+    aliases: ["www", "http-alt", "websocket", "https"]
+  - services: "ftp"
+    aliases: ["sftp", "ftps"]
 
-    - services: "ssh"
-      aliases: ["openssh", "ssh2", "secure-shell", "sftp"]
+# Define common args as array of separate arguments
+common-nmap-args: &common-nmap-args
+  - "--max-retries"
+  - "2"
 
-    - services: "http"
-      aliases: ["www", "http-alt", "websocket", "https"]
-
-    - services: "ftp"
-      aliases: ["sftp", "ftps"]
+scope-assignment:
+  - tool: "nmap"
+    arg: "-iL"
+    description: "Command line flag for assigning input file for Nmap."
 
 scan-collection:
   - scan-item:
       tool: "nmap"
-      args: [ "--script", "vuln and not smb-vuln-*" ]
+      args:
+        - "-sn"
+        - "-PS21,22,80,443,3389"
+        - "-PA80,443"
+        - "-PU40125"
+        - "-PY80,443"
+        - "-PE"
+        - "-PP"
+        - "-PM"
+        - "-v"
+      host_discovery: true
+      description: "Ping scan for initial host discovery"
+
+  - scan-item:
+      tool: "nmap"
+      args:
+        - "-p-"
+        - "--open"
+        - "--closed"
+        - "-v"
+      service_discovery: true
+      description: "TCP service discovery"
+
+  - scan-item:
+      tool: "nmap"
+      args:
+        - "--top-ports"
+        - "1000"
+        - "--open"
+        - "--closed"
+        - "-v"
+      service_discovery: true
+      description: "UDP service discovery"
+
+  - scan-item:
+      tool: "nmap"
+      args:
+        - "--script"
+        - "vuln and not smb-vuln-*"
       protocol: "tcp"
       description: "All nmap vuln scanning scripts except SMB"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
       tool: "nmap"
-      args: ["-sTV"]
+      args:
+        - "-sTV"
       protocol: "tcp"
       scripts: ""
 
   - scan-item:
       description: "TCP all ports SSL ciphers"
       tool: "nmap"
-      args: [ "-sT", "--script", "ssl-enum-ciphers" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "ssl-enum-ciphers"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP all ports - All SSL scripts"
       tool: "nmap"
-      args: [ "-sT", "--script", "ssl-*,sslv2-* and not ssl-enum-ciphers" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "ssl-*,sslv2-* and not ssl-enum-ciphers"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP UDP common admin interfaces"
       tool: "nmap"
-      args: [ "-sTUV", "-p", "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"]
+      args:
+        - "-sTUV"
+        - "-p"
+        - "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"
       protocol: "both"
 
   - scan-item:
       description: "UDP SNMP all except brute on default 161"
       services: ["snmp"]
       tool: "nmap"
-      args: [ "-sU", "--script", "snmp-* and not snmp-brute.nse", "-p", "161" ]
+      args:
+        - "-sU"
+        - "--script"
+        - "snmp-* and not snmp-brute.nse"
+        - "-p"
+        - "161"
       protocol: "udp"
 
   - scan-item:
       description: "TCP all ports for SSH algos"
       tool: "nmap"
       services: ["ssh"]
-      args: [ "-sT", "--script", "ssh2-enum-algos" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "ssh2-enum-algos"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP all ports for SSH all except algos"
       tool: "nmap"
       services: ["ssh"]
-      args: [ "-sT", "--script", "ssh-* and not (ssh2-enum-algos or ssh-brute)" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "ssh-* and not (ssh2-enum-algos or ssh-brute)"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP FTP scripts on all ports"
       tool: "nmap"
       services: ["ftp"]
-      args: [ "-sT", "--script", "ftp-* and not ftp-brute" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "ftp-* and not ftp-brute"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP RDP scripts on all ports"
       tool: "nmap"
       services: ["rdp"]
-      args: [ "-sT", "--script", "rdp-*" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "rdp-*"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP SMB scripts on all ports"
       tool: "nmap"
       services: ["smb"]
-      args: [ "-sT", "--script", "smb-* and not smb-brute.nse" ]
+      args:
+        - "-sT"
+        - "--script"
+        - "smb-* and not smb-brute.nse"
       protocol: "tcp"
 
   - scan-item:
       description: "UDP NTP scripts on all ports"
       tool: "nmap"
       services: ["ntp"]
-      args: [ "-sU", "--script", "ntp-info,ntp-monlist" ]
+      args:
+        - "-sU"
+        - "--script"
+        - "ntp-info,ntp-monlist"
       protocol: "udp"

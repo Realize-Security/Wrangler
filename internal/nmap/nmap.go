@@ -8,14 +8,7 @@ import (
 	"strconv"
 )
 
-var (
-	VerbosityLow    = "-v"
-	VerbosityMedium = "-vv"
-	VerbosityHigh   = "-vvv"
-)
-
 const (
-	BinaryName    = "nmap"
 	TCP           = "tcp"
 	UDP           = "udp"
 	TCPandUDP     = "both"
@@ -23,12 +16,6 @@ const (
 	NoPortScan    = "sn"
 	TCPPortPrefix = "T:"
 	UDPPortPrefix = "U:"
-	Paranoid      = "0"
-	Sneaky        = "1"
-	Polite        = "2"
-	Normal        = "3"
-	Aggressive    = "4"
-	Insane        = "5"
 )
 
 // Command holds the scan type, targets, and a map of arguments

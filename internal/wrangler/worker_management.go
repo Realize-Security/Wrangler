@@ -60,7 +60,7 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 		return
 	}
 
-	log.Printf("[*] Starting to monitor %d workers", len(workers))
+	log.Printf("[*] Monitoring %d workers", len(workers))
 
 	for i := range workers {
 		w := &workers[i]

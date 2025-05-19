@@ -2,13 +2,34 @@ package wrangler
 
 import (
 	"Wrangler/internal/files"
-	"Wrangler/internal/nmap"
 	"Wrangler/pkg/models"
 	"fmt"
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
+)
+
+// Add these at the package level along with existing atomic booleans
+var (
+	// Existing
+	discoveryDone   atomic.Bool
+	serviceEnumDone atomic.Bool
+
+	// New atomic flags to track whether processes have started
+	discoveryStarted    atomic.Bool
+	serviceEnumStarted  atomic.Bool
+	staticScanStarted   atomic.Bool
+	templateScanStarted atomic.Bool
+
+	// Add this flag to properly track template scan completion
+	templateScanDone atomic.Bool
+
+	// New phase completion WaitGroups
+	discoveryWG   sync.WaitGroup
+	serviceEnumWG sync.WaitGroup
+	staticScanWG  sync.WaitGroup
 )
 
 // startScanProcess kicks off scanning stages in order
@@ -25,147 +46,192 @@ func (wr *wranglerRepository) startScanProcess() {
 		}
 	}(tempDir)
 
+	// Initialize all process flags to false
+	discoveryDone.Store(false)
+	serviceEnumDone.Store(false)
+	templateScanDone.Store(false) // Initialize the new flag
+	discoveryStarted.Store(false)
+	serviceEnumStarted.Store(false)
+	staticScanStarted.Store(false)
+	templateScanStarted.Store(false)
+
+	// Create a WaitGroup to keep the main function alive until all work is done
+	var mainWg sync.WaitGroup
+
 	// Step 1: Run host discovery
-	wr.DiscoveryWorkersInit(project.InScopeHosts, tempDir)
+	discoveryWG.Add(1)
+	mainWg.Add(1)
+	log.Println("[*] Starting host discovery phase")
+	go func() {
+		defer discoveryWG.Done()
+		defer mainWg.Done()
+		wr.DiscoveryWorkersInit(wr.hostDiscoveryWorkers.GetAll(), project.InScopeHosts, tempDir)
+		log.Println("[*] Discovery workers initialization completed")
+		// The discoveryDone flag should be set in DiscoveryScan by the WaitGroup
+	}()
 
-	// Step 2: Start static workers
-	wr.staticScanners(wr.staticWorkers.GetAll())
+	// Step 2a: Start static workers. Depends on DiscoveryWorkersInit
+	staticScanWG.Add(1)
+	mainWg.Add(1)
+	go func() {
+		defer staticScanWG.Done()
+		defer mainWg.Done()
+		log.Println("[*] Waiting for discovery to start before static scanners")
+		for !discoveryStarted.Load() {
+			time.Sleep(time.Second)
+		}
+		log.Println("[*] Starting static scanners phase")
+		wr.staticScanners(wr.staticWorkers.GetAll())
+		log.Println("[*] Static scanners phase completed")
+	}()
 
-	// Step 3: Start  service enumeration
-	wr.serviceEnumeration()
+	// Step 2b: Start service enumeration. Depends on DiscoveryWorkersInit
+	serviceEnumWG.Add(1)
+	mainWg.Add(1)
+	go func() {
+		defer serviceEnumWG.Done()
+		defer mainWg.Done()
+		log.Println("[*] Waiting for discovery to start before service enum")
+		for !discoveryStarted.Load() {
+			time.Sleep(time.Second)
+		}
+		log.Println("[*] Starting service enumeration phase")
+		wr.serviceEnumeration(wr.serviceDiscoveryWorkers.GetAll())
+		log.Println("[*] Service enumeration phase completed")
+	}()
 
-	// Step 4: Start primary scanners
-	wr.templateScanners(wr.templateWorkers.GetAll())
+	// Step 3: Start primary scanners. Depends on serviceEnumeration
+	mainWg.Add(1)
+	go func() {
+		defer mainWg.Done()
+		log.Println("[*] Waiting for service enum to start before templates")
+		for !serviceEnumStarted.Load() {
+			time.Sleep(time.Second)
+		}
+		log.Println("[*] Starting template scanners phase")
+		wr.templateScanners(wr.templateWorkers.GetAll())
+		log.Println("[*] Template scanners phase completed")
+	}()
 
-	log.Printf("[*] Project '%s' completed Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
+	// Wait for all goroutines to finish their work
+	log.Println("[*] Waiting for all scan phases to complete")
+	mainWg.Wait()
+	log.Println("[*] All scan phases completed")
+
+	log.Printf("[*] Project '%s' completed execution with ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
 	logProjectDetails(project)
 }
 
 // serviceEnumeration scans identified hosts to identify open ports and determine what services are listening
-func (wr *wranglerRepository) serviceEnumeration() {
-	var wg sync.WaitGroup
+func (wr *wranglerRepository) serviceEnumeration(templates []models.Worker) {
+	var phaseBatchesWG sync.WaitGroup // Track all batches for this phase
 	serviceEnumDone.Store(false)
-	nmapBin := getBinaryPath(nmap.BinaryName)
-
-	discoveryCompleted := false
-	emptyQueueCounter := 0 // To avoid exiting too early due to temporary empty queue
 
 	for {
-		// Update our tracking of discovery completion status
-		if !discoveryCompleted && discoveryDone.Load() {
-			discoveryCompleted = true
-			log.Println("[*] Host discovery phase completed, continuing service enumeration")
+		// Signal if any targets are available
+		if wr.serviceEnum.Len() > 0 && !serviceEnumStarted.Load() {
+			log.Println("[*] Service enumeration has started processing targets")
+			serviceEnumStarted.Store(true)
 		}
 
-		// Check if it's time to exit the loop
-		if discoveryCompleted && wr.serviceEnum.Len() == 0 {
-			// Wait a bit longer to ensure no new items are added
-			emptyQueueCounter++
+		// Exit condition
+		if discoveryDone.Load() && wr.serviceEnum.Len() == 0 {
+			if serviceEnumStarted.Load() {
+				// Wait a bit to ensure no new targets are coming
+				time.Sleep(time.Second * 5)
 
-			// Exit only if queue remains empty for multiple checks
-			// This handles the case where targets might be added to the queue after we checked
-			if emptyQueueCounter >= 5 { // Adjust this value as needed
-				fmt.Println("[*] Service enumeration completed")
-				serviceEnumDone.Store(true)
-				return
+				// Double-check empty queue condition
+				if wr.serviceEnum.Len() == 0 {
+					// Wait for all in-progress batches to complete before marking phase as done
+					log.Println("[*] Waiting for all service enumeration workers to complete...")
+					phaseBatchesWG.Wait()
+					log.Println("[*] All service enumeration workers completed")
+					serviceEnumDone.Store(true)
+					break
+				}
+			} else {
+				// If discovery is done but we never started processing targets
+				// and queue is empty, we should also exit
+				if wr.serviceEnum.Len() == 0 {
+					log.Println("[*] Service enumeration skipped - no targets")
+					serviceEnumDone.Store(true)
+					break
+				}
+				time.Sleep(time.Second * 2)
 			}
-
-			// Sleep before checking again to allow time for queue to be populated
-			time.Sleep(time.Second * 2)
-			continue
-		}
-
-		// Reset counter if we found items
-		if wr.serviceEnum.Len() > 0 {
-			emptyQueueCounter = 0
 		}
 
 		if wr.serviceEnum.Len() == 0 {
-			// Gently throttle loops
 			time.Sleep(time.Second * 2)
 			continue
 		}
 
+		workers := make([]models.Worker, 0)
 		targets := wr.serviceEnum.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		// Configure TCP command
-		tcpCmd := nmap.NewCommand(nmap.TCP)
-		tcpCmd.Add().
-			MinHostGroup(100).
-			MinRate(150).
-			MaxRetries(2).
-			AllPorts()
-
-		desc := "TCP service discovery scan"
-		wTCP := wr.NewWorkerNoService(nmapBin, nil, nmap.TCP, desc)
-		wTCP.Args = tcpCmd.ToArgList()
-
-		// Configure UDP command
-		udpCmd := nmap.NewCommand(nmap.UDP)
-		udpCmd.Add().
-			MinHostGroup(100).
-			MinRate(150).
-			MaxRetries(2).
-			TopPorts(1000)
-
-		desc = "UDP service discovery scan"
-		wUDP := wr.NewWorkerNoService(nmapBin, nil, nmap.UDP, desc)
-		wUDP.Args = udpCmd.ToArgList()
-
-		workers := []models.Worker{
-			wTCP,
-			wUDP,
+		for _, tw := range templates {
+			w := wr.DuplicateWorker(&tw)
+			workers = append(workers, w)
 		}
-		wg.Add(len(workers))
 
-		log.Println("[*] Starting service enumeration")
-		wr.startWorkers(project, workers, targets, &wg)
+		var batchWG sync.WaitGroup
+		batchWG.Add(len(workers))
+
+		log.Printf("[*] Starting service enumeration batch with %d workers", len(workers))
+		wr.startWorkers(project, workers, targets, &batchWG)
 		wr.MonitorServiceEnum(workers)
 		wr.SetupSignalHandler(workers, sigCh)
 		wr.DrainWorkerErrors(workers, errCh)
 		wr.ListenToWorkerErrors(workers, errCh)
 
+		// Track this batch in the phase's overall WaitGroup
+		phaseBatchesWG.Add(1)
 		go func() {
-			wg.Wait()
-			log.Println("[*] Worker batch completed")
+			batchWG.Wait()
+			log.Println("[*] Service enumeration batch completed")
+			phaseBatchesWG.Done() // Signal this batch is complete
 		}()
 	}
 }
 
-// staticScanners are defined as scans within the YAML config file which already have ports assigned and do not require modification.
+// staticScanners are defined as scans within the YAML config file which already have ports assigned
 func (wr *wranglerRepository) staticScanners(workers []models.Worker) {
-	var wg sync.WaitGroup
+	var phaseBatchesWG sync.WaitGroup // Track all batches for this phase
 	var count = 0
-	discoveryCompleted := false
-	emptyQueueCounter := 0
-	allBatchesComplete := true
 
 	for {
-		if !discoveryCompleted && discoveryDone.Load() {
-			discoveryCompleted = true
-			log.Println("[*] Host discovery phase completed, continuing static scanners")
+		// Signal if any targets are available
+		if wr.staticTargets.Len() > 0 && !staticScanStarted.Load() {
+			log.Println("[*] Static scanners have started processing targets")
+			staticScanStarted.Store(true)
 		}
 
-		// Exit condition - only if queue is empty for multiple checks AND all batches are complete
-		if discoveryCompleted && wr.staticTargets.Len() == 0 {
-			emptyQueueCounter++
+		// Exit condition
+		if discoveryDone.Load() && wr.staticTargets.Len() == 0 {
+			if staticScanStarted.Load() {
+				// Wait a bit to ensure no new targets are coming
+				time.Sleep(time.Second * 5)
 
-			if emptyQueueCounter >= 5 && allBatchesComplete {
-				fmt.Println("[*] Static scanners completed")
-				break
+				// Double-check empty queue condition
+				if wr.staticTargets.Len() == 0 {
+					// Wait for all in-progress batches to complete
+					log.Println("[*] Waiting for all static scanners to complete...")
+					phaseBatchesWG.Wait()
+					log.Println("[*] All static scanners completed")
+					break
+				}
+			} else {
+				// If discovery is done but we never started processing targets
+				// and queue is empty, we should also exit
+				if wr.staticTargets.Len() == 0 {
+					log.Println("[*] Static scanners skipped - no targets")
+					break
+				}
+				time.Sleep(time.Second * 2)
 			}
-
-			time.Sleep(time.Second * 2)
-			continue
-		}
-
-		// Reset counter
-		if wr.staticTargets.Len() > 0 {
-			emptyQueueCounter = 0
 		}
 
 		if wr.staticTargets.Len() == 0 {
-			// Gently throttle any loops
 			time.Sleep(time.Second * 2)
 			continue
 		}
@@ -173,94 +239,95 @@ func (wr *wranglerRepository) staticScanners(workers []models.Worker) {
 		log.Printf("[*] Starting %d static scanners", len(workers))
 		targets := wr.staticTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		allBatchesComplete = false
+		var batchWG sync.WaitGroup
+		batchWG.Add(len(workers))
 
-		wg.Add(len(workers))
-		wr.startWorkers(project, workers, targets, &wg)
+		wr.startWorkers(project, workers, targets, &batchWG)
 		wr.SetupSignalHandler(workers, sigCh)
 		wr.DrainWorkerErrors(workers, errCh)
 		wr.ListenToWorkerErrors(workers, errCh)
 
-		log.Printf("[*] Static scanner %d running", count)
+		log.Printf("[*] Static scanner batch %d running", count)
 		count++
 
+		// Track this batch in the phase's overall WaitGroup
+		phaseBatchesWG.Add(1)
 		go func() {
-			wg.Wait()
+			batchWG.Wait()
 			log.Println("[*] Static scanner batch completed")
-			// Only set the flag if no more batches are being processed
-			// This avoids a race condition where a new batch starts just as an old one finishes
-			if wr.staticTargets.Len() == 0 {
-				allBatchesComplete = true
-			}
+			phaseBatchesWG.Done() // Signal this batch is complete
 		}()
 	}
 }
 
-// TemplateScanners are defined as scans within the YAML config file which do not have ports pre-assigned.
-// These scans will be dynamically allocated to target services based on the YAML 'service' field value and aliases
+// templateScanners are defined as scans within the YAML config file which do not have ports pre-assigned
 func (wr *wranglerRepository) templateScanners(workers []models.Worker) {
-	var wg sync.WaitGroup
-	serviceEnumCompleted := false
-	emptyQueueCounter := 0
-	allBatchesComplete := true // Start true, set to false when a batch starts, set back to true when all complete
+	var phaseBatchesWG sync.WaitGroup // Track all batches for this phase
+	templateScanDone.Store(false)     // Initialize to false at start
 
 	for {
-		if !serviceEnumCompleted && serviceEnumDone.Load() {
-			serviceEnumCompleted = true
-			log.Println("[*] Service enumeration phase completed, continuing template scanners")
+		// Signal if any targets are available
+		if wr.templateTargets.Len() > 0 && !templateScanStarted.Load() {
+			log.Println("[*] Template scanners have started processing targets")
+			templateScanStarted.Store(true)
 		}
 
-		// Exit condition - only if queue is empty for multiple checks AND all batches are complete
-		if discoveryDone.Load() && serviceEnumCompleted && wr.templateTargets.Len() == 0 && wr.serviceEnum.Len() == 0 {
-			emptyQueueCounter++
+		// Exit condition
+		if serviceEnumDone.Load() && wr.templateTargets.Len() == 0 {
+			if templateScanStarted.Load() {
+				// Wait a bit to ensure no new targets are coming
+				time.Sleep(time.Second * 5)
 
-			if emptyQueueCounter >= 5 && allBatchesComplete {
-				fmt.Println("[*] Template scanners completed")
-				break
+				// Double-check empty queue condition
+				if wr.templateTargets.Len() == 0 {
+					// Wait for all in-progress batches to complete
+					log.Println("[*] Waiting for all template scanners to complete...")
+					phaseBatchesWG.Wait()
+					log.Println("[*] All template scanners completed")
+					templateScanDone.Store(true) // Set completion flag
+					break
+				}
+			} else {
+				// If service enumeration is done but we never started processing targets
+				// and queue is empty, we should also exit
+				if wr.templateTargets.Len() == 0 {
+					log.Println("[*] Template scanners skipped - no targets")
+					templateScanDone.Store(true) // Set completion flag
+					break
+				}
+				time.Sleep(time.Second * 2)
 			}
-
-			time.Sleep(time.Second * 2)
-			continue
-		}
-
-		// Reset counter
-		if wr.templateTargets.Len() > 0 || wr.serviceEnum.Len() > 0 {
-			emptyQueueCounter = 0
 		}
 
 		if wr.templateTargets.Len() == 0 {
-			// Gently throttle any loops
 			time.Sleep(time.Second * 2)
 			continue
 		}
 
 		if len(workers) == 0 {
 			log.Println("[!] No template workers, skipping")
-			continue
+			templateScanDone.Store(true) // Set completion flag if no workers
+			break
 		}
 
 		targets := wr.templateTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		// Mark that a batch is starting
-		allBatchesComplete = false
+		var batchWG sync.WaitGroup
+		batchWG.Add(len(workers))
 
 		log.Printf("[*] Starting %d template scanners", len(workers))
-		wg.Add(len(workers))
-		wr.startWorkers(project, workers, targets, &wg)
+		wr.startWorkers(project, workers, targets, &batchWG)
 		wr.SetupSignalHandler(workers, sigCh)
 		wr.DrainWorkerErrors(workers, errCh)
 		wr.ListenToWorkerErrors(workers, errCh)
-		log.Println("[*] Templated scanners running")
+		log.Println("[*] Templated scanners batch running")
 
-		// Start a goroutine to wait for this batch to complete
+		// Track this batch in the phase's overall WaitGroup
+		phaseBatchesWG.Add(1)
 		go func() {
-			wg.Wait()
+			batchWG.Wait()
 			log.Println("[*] Template scanner batch completed")
-			// Only set the flag if no more batches are being processed
-			// This avoids a race condition where a new batch starts just as an old one finishes
-			if wr.templateTargets.Len() == 0 && wr.serviceEnum.Len() == 0 {
-				allBatchesComplete = true
-			}
+			phaseBatchesWG.Done() // Signal this batch is complete
 		}()
 	}
 }
