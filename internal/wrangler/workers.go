@@ -41,6 +41,7 @@ func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Work
 		TargetService:      worker.TargetService,
 		IsHostDiscovery:    worker.IsHostDiscovery,
 		IsServiceDiscovery: worker.IsServiceDiscovery,
+		ScopeArg:           worker.ScopeArg,
 
 		UserCommand:    make(chan string, 1),
 		WorkerResponse: make(chan string, 1),
