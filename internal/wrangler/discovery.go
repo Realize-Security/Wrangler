@@ -10,13 +10,81 @@ import (
 	"time"
 )
 
+//func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
+//	workers := wr.createDiscoveryWorkers(templates, inScope, scopeDir)
+//	if len(workers) == 0 {
+//		log.Println("[!] No discovery workers were initialized")
+//		discoveryDone.Store(true)
+//		return
+//	}
+//	wr.startAndMonitorWorkers(workers)
+//	discoveryStarted.Store(true)
+//}
+
+// DiscoveryWorkersInit initializes and starts discovery workers
 func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
 	workers := wr.createDiscoveryWorkers(templates, inScope, scopeDir)
+
 	if len(workers) == 0 {
 		log.Println("[!] No discovery workers were initialized")
+		discoveryStarted.Store(true) // Signal that discovery has started (even if empty)
+		discoveryDone.Store(true)    // Signal that discovery is done
 		return
 	}
+
+	// Signal that discovery has started - this MUST happen before we start any workers
+	discoveryStarted.Store(true)
+
 	wr.startAndMonitorWorkers(workers)
+}
+
+// DiscoveryScan starts worker goroutines for discovery workers
+func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup) {
+	for i := range workers {
+		w := &workers[i]
+		log.Println("[*] Host discovery started")
+		go func(dw *models.Worker) {
+			defer wg.Done()
+			dw.Started = time.Now()
+			ctx, cancel := context.WithCancel(context.Background())
+			dw.CancelFunc = cancel
+			cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, dw, dw.Args)
+			dw.Cmd = cmdObj
+			if startErr != nil {
+				log.Printf("Worker %s: Start failed: %v", dw.ID.String(), startErr)
+				dw.ErrorChan <- startErr
+				dw.WorkerResponse <- ""
+				close(dw.WorkerResponse)
+				dw.Finished = time.Now()
+				cancel()
+				return
+			}
+			stdout := <-outChan
+			stderr := <-stderrChan
+			err := <-errChan
+			dw.WorkerResponse <- stdout
+			if err != nil {
+				if stderr != "" {
+					fmt.Println(stderr)
+					dw.StdError = stderr
+				}
+				dw.ErrorChan <- err
+			} else {
+				dw.ErrorChan <- nil
+			}
+			dw.Finished = time.Now()
+			close(dw.WorkerResponse)
+			cancel()
+			dw.UserCommand <- "run"
+		}(w)
+	}
+
+	// CRITICAL: This goroutine waits for all workers to complete and sets discoveryDone flag
+	go func() {
+		wg.Wait()
+		log.Println("[*] Host discovery complete")
+		discoveryDone.Store(true)
+	}()
 }
 
 func (wr *wranglerRepository) createDiscoveryWorkers(templates []models.Worker, inScope []string, scopeDir string) []models.Worker {
@@ -57,60 +125,6 @@ func (wr *wranglerRepository) startAndMonitorWorkers(workers []models.Worker) {
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
-}
-
-func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.WaitGroup) {
-	discoveryDone.Store(false)
-	for i := range workers {
-		w := &workers[i]
-
-		log.Println("[*] Host discovery started")
-		go func(dw *models.Worker) {
-			defer wg.Done()
-			dw.Started = time.Now()
-
-			ctx, cancel := context.WithCancel(context.Background())
-			dw.CancelFunc = cancel
-
-			cmdObj, outChan, stderrChan, errChan, startErr := runCommandCtx(ctx, dw, dw.Args)
-			dw.Cmd = cmdObj
-
-			if startErr != nil {
-				log.Printf("Worker %s: Start failed: %v", dw.ID.String(), startErr)
-				dw.ErrorChan <- startErr
-				dw.WorkerResponse <- ""
-				close(dw.WorkerResponse)
-				dw.Finished = time.Now()
-				cancel()
-				return
-			}
-
-			stdout := <-outChan
-			stderr := <-stderrChan
-			err := <-errChan
-
-			dw.WorkerResponse <- stdout
-			if err != nil {
-				if stderr != "" {
-					fmt.Println(stderr)
-					dw.StdError = stderr
-				}
-				dw.ErrorChan <- err
-			} else {
-				dw.ErrorChan <- nil
-			}
-			dw.Finished = time.Now()
-			close(dw.WorkerResponse)
-			cancel()
-			dw.UserCommand <- "run"
-		}(w)
-	}
-
-	go func() {
-		wg.Wait()
-		log.Println("[*] Host discovery complete")
-		discoveryDone.Store(true)
-	}()
 }
 
 func (wr *wranglerRepository) createChunkFile(dir string, index int, chunk []string) (string, error) {

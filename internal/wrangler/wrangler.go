@@ -13,7 +13,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // WorkerStop is used to tell a worker goroutine to shut down.
@@ -21,9 +20,6 @@ const WorkerStop = "STOP"
 
 var (
 	project *models.Project
-	// Atomics
-	discoveryDone   atomic.Bool
-	serviceEnumDone atomic.Bool
 
 	scopeDir            = "discovered"
 	inScopeFile         = "in_scope.txt"

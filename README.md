@@ -15,6 +15,14 @@ Whilst it may be possible to create a separate Nmap process for each host, this 
 
 Currently only service discovery on TCP is supported. This will have to be extended to support UDP and to categorise ports by UDP, TCP, both or other.
 
+### Assign CAP
+
+```sh
+> sudo apt-get install libcap2-bin 
+> sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
+> getcap $(which nmap)
+/usr/bin/nmap cap_net_bind_service,cap_net_admin,cap_net_raw=eip
+```
 
 ## TODO:
 
