@@ -38,8 +38,6 @@ scan-collection:
       tool: "nmap"
       args:
         - "-p-"
-        - "--open"
-        - "--closed"
         - "-v"
       service_discovery: true
       description: "TCP service discovery"
@@ -49,10 +47,9 @@ scan-collection:
       args:
         - "--top-ports"
         - "1000"
-        - "--open"
-        - "--closed"
         - "-v"
       service_discovery: true
+      protocol: "udp"
       description: "UDP service discovery"
 
   - scan-item:
@@ -81,7 +78,7 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
-      description: "TCP all ports - All SSL scripts"
+      description: "TCP all ports and all SSL scripts"
       tool: "nmap"
       args:
         - "-sT"

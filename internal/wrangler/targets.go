@@ -36,5 +36,5 @@ func TargetEquals(a, b models.Target) bool {
 }
 
 func WorkerEquals(a, b models.Worker) bool {
-	return a.ID != b.ID
+	return a.ID == b.ID
 }

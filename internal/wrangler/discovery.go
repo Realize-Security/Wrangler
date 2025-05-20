@@ -10,29 +10,17 @@ import (
 	"time"
 )
 
-//func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
-//	workers := wr.createDiscoveryWorkers(templates, inScope, scopeDir)
-//	if len(workers) == 0 {
-//		log.Println("[!] No discovery workers were initialized")
-//		discoveryDone.Store(true)
-//		return
-//	}
-//	wr.startAndMonitorWorkers(workers)
-//	discoveryStarted.Store(true)
-//}
-
 // DiscoveryWorkersInit initializes and starts discovery workers
 func (wr *wranglerRepository) DiscoveryWorkersInit(templates []models.Worker, inScope []string, scopeDir string) {
 	workers := wr.createDiscoveryWorkers(templates, inScope, scopeDir)
 
 	if len(workers) == 0 {
 		log.Println("[!] No discovery workers were initialized")
-		discoveryStarted.Store(true) // Signal that discovery has started (even if empty)
-		discoveryDone.Store(true)    // Signal that discovery is done
+		discoveryStarted.Store(true)
+		discoveryDone.Store(true)
 		return
 	}
 
-	// Signal that discovery has started - this MUST happen before we start any workers
 	discoveryStarted.Store(true)
 
 	wr.startAndMonitorWorkers(workers)
@@ -79,7 +67,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 		}(w)
 	}
 
-	// CRITICAL: This goroutine waits for all workers to complete and sets discoveryDone flag
 	go func() {
 		wg.Wait()
 		log.Println("[*] Host discovery complete")

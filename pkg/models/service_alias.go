@@ -1,6 +1,9 @@
 package models
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 type ServiceAlias struct {
 	Service string   `yaml:"service"`
@@ -18,43 +21,43 @@ type ServiceAliasManager struct {
 
 // IsServiceMatch checks if the detected service matches any of the target services
 func (sam *ServiceAliasManager) IsServiceMatch(detectedService string, targetServices []string) bool {
-	if len(targetServices) == 0 {
+	if len(targetServices) == 0 || detectedService == "" {
 		return false
 	}
 
 	detected := strings.ToLower(detectedService)
 
-	// Get canonical service for the detected service (if it's an alias)
-	canonicalDetected, exists := sam.AliasMap[detected]
-	if !exists {
-		canonicalDetected = detected
-	}
-
 	// Check if any target service matches
 	for _, target := range targetServices {
 		targetLower := strings.ToLower(target)
 
-		// Check if target is the canonical name of what we detected
-		if targetLower == canonicalDetected {
+		// Check if detected service starts with target name
+		pattern := "^" + regexp.QuoteMeta(targetLower)
+		match, _ := regexp.MatchString(pattern, detected)
+		if match {
 			return true
 		}
 
-		// Check if target's canonical name matches our detected service's canonical name
-		if canonicalTarget, exists := sam.AliasMap[targetLower]; exists {
-			if canonicalTarget == canonicalDetected {
-				return true
-			}
-		}
-
-		// Check if the detected service is in the aliases for the target
+		// Check if detected service starts with any alias of the target
 		if aliases, exists := sam.ServiceMap[targetLower]; exists {
 			for _, alias := range aliases {
-				if alias == detected {
+				aliasLower := strings.ToLower(alias)
+				pattern := "^" + regexp.QuoteMeta(aliasLower)
+				match, _ := regexp.MatchString(pattern, detected)
+				if match {
 					return true
 				}
 			}
 		}
-	}
 
+		// Check if detected service is an alias, and its canonical form starts with target
+		if canonicalDetected, exists := sam.AliasMap[detected]; exists {
+			pattern := "^" + regexp.QuoteMeta(targetLower)
+			match, _ := regexp.MatchString(pattern, canonicalDetected)
+			if match {
+				return true
+			}
+		}
+	}
 	return false
 }

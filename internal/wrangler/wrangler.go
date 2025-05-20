@@ -7,7 +7,6 @@ import (
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"os"
 	"path"
@@ -30,6 +29,12 @@ var (
 	// Channels
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
+
+	// State management
+	workerTracker = NewWorkerTracker()
+
+	// Worker ID generation
+	uuidGen = helpers.Generator()
 )
 
 // WranglerRepository defines the interface for creating/managing projects.
@@ -74,7 +79,7 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 // NewProject creates a new Project (not yet started).
 func (wr *wranglerRepository) NewProject() *models.Project {
 
-	eid := uuid.Must(uuid.NewUUID())
+	eid := uuidGen.UUIDv1()
 	project = &models.Project{
 		ExecutionID:      eid,
 		Name:             eid.String() + "_" + wr.cli.ProjectName,
@@ -255,7 +260,6 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 	return serviceAliasManager.IsServiceMatch(serviceName, targetServices)
 }
 
-// TODO: THIS
 func setToolBinPath(scans []models.Scan) error {
 	// Create map of unique tools (pre-allocated)
 	uniqueTools := make(map[string]struct{}, len(scans))
