@@ -302,7 +302,7 @@ func runWorker(w *models.Worker, args []string) {
 	output, err := c.CombinedOutput()
 
 	if w.WorkerResponse != nil {
-		log.Printf("[!] '%s' - Empty response detected: %s", w.Description, string(output))
+		log.Printf("[*] '%s' - Non-empty response detected: %s", w.Description, string(output))
 		w.WorkerResponse <- string(output)
 	}
 
