@@ -7,7 +7,6 @@ import (
 	"Wrangler/pkg/models"
 	"Wrangler/pkg/serializers"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"os"
 	"path"
@@ -30,6 +29,12 @@ var (
 	// Channels
 	sigCh = make(chan os.Signal, 1)
 	errCh = make(chan error, 1)
+
+	// State management
+	workerTracker = NewWorkerTracker()
+
+	// Worker ID generation
+	uuidGen = helpers.IDGenerator()
 )
 
 // WranglerRepository defines the interface for creating/managing projects.
@@ -74,7 +79,7 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 // NewProject creates a new Project (not yet started).
 func (wr *wranglerRepository) NewProject() *models.Project {
 
-	eid := uuid.Must(uuid.NewUUID())
+	eid := uuidGen.Generate()
 	project = &models.Project{
 		ExecutionID:      eid,
 		Name:             eid.String() + "_" + wr.cli.ProjectName,

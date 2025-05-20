@@ -56,7 +56,6 @@ func (wt *WorkerTracker) createKey(execID uuid.UUID, host string, port string, p
 }
 
 // ClearProject removes all tracking data for a specific project execution ID
-// Useful for cleanup after a project completes
 func (wt *WorkerTracker) ClearProject(execID uuid.UUID) {
 	prefix := execID.String() + ":"
 

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"os"
@@ -33,7 +32,7 @@ func (wr *wranglerRepository) NewWorkerWithService(scan *models.Scan) models.Wor
 // DuplicateWorker duplicates an existing worker with a new ID
 func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Worker {
 	return models.Worker{
-		ID:                 uuid.Must(uuid.NewUUID()),
+		ID:                 uuidGen.Generate(),
 		Tool:               worker.Tool,
 		Args:               worker.Args,
 		Protocol:           worker.Protocol,
@@ -54,7 +53,7 @@ func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Work
 func (wr *wranglerRepository) returnWorkerInstance(scan *models.Scan) models.Worker {
 	wr.appendExclusions(&scan.Args)
 	return models.Worker{
-		ID:                 uuid.Must(uuid.NewUUID()),
+		ID:                 uuidGen.Generate(),
 		Tool:               scan.Tool,
 		Args:               scan.Args,
 		Protocol:           scan.Protocol,
@@ -109,7 +108,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 		}()
 
 		f := project.InScopeFile
-		taskId := uuid.Must(uuid.NewUUID()).String()
+		taskId := uuidGen.Generate().String()
 
 		// Track which workers we'll actually run
 		var activeWorkers []models.Worker
@@ -158,44 +157,111 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 	return
 }
 
-// determineAndAssignScanPorts configures ports for workers and returns false if the worker should be skipped (no matching services found)
+// determineAndAssignScanPorts configures ports for workers and returns false if the worker should be skipped
 func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) bool {
+	// Check if this is a worker with hardcoded ports
 	if portsAreHardcoded(w) {
-		return true // Always run workers with hardcoded ports
+		// Even for hardcoded port workers, check if all targets have been processed
+		allTargetsProcessed := true
+		for _, target := range targets {
+			if !workerTracker.IsTrackedForTarget(project.ExecutionID, target, w) {
+				allTargetsProcessed = false
+				break
+			}
+		}
+
+		if allTargetsProcessed {
+			log.Printf("[*] Skipping hardcoded port worker %s - all targets already processed", w.Description)
+			return false
+		}
+
+		// Track these targets for this worker before running
+		for _, target := range targets {
+			workerTracker.TrackForTarget(project.ExecutionID, target, w)
+		}
+		return true
 	}
 
 	var udp []string
 	var tcp []string
 
+	// Keep track of which targets will actually be processed
+	var targetsToProcess []*models.Target
+
 	// If worker has targetService specified, filter ports by service
 	if w.TargetService != nil && len(w.TargetService) > 0 {
 		targetServiceStr := strings.Join(w.TargetService, ", ")
 
-		tcpPorts := getUniquePortsForTargetsAndService(targets, nmap.TCP, w.TargetService)
+		// Generate unique ports while filtering out already processed targets
+		var unprocessedTCPPorts []string
+		var unprocessedUDPPorts []string
+
+		for _, target := range targets {
+			if workerTracker.IsTrackedForTarget(project.ExecutionID, target, w) {
+				continue
+			}
+
+			targetsToProcess = append(targetsToProcess, target)
+
+			// Extract TCP ports that match the service and haven't been processed
+			for _, port := range target.Ports {
+				if port.Protocol == nmap.TCP && serviceMatches(port.Service, w.TargetService) {
+					if !workerTracker.IsTracked(project.ExecutionID, target.Host, port.PortID, port.Protocol, w) {
+						unprocessedTCPPorts = append(unprocessedTCPPorts, port.PortID)
+					}
+				}
+			}
+
+			// Extract UDP ports that match the service and haven't been processed
+			for _, port := range target.Ports {
+				if port.Protocol == nmap.UDP && serviceMatches(port.Service, w.TargetService) {
+					if !workerTracker.IsTracked(project.ExecutionID, target.Host, port.PortID, port.Protocol, w) {
+						unprocessedUDPPorts = append(unprocessedUDPPorts, port.PortID)
+					}
+				}
+			}
+		}
+
+		// Make the port lists unique
+		tcpPorts := makeUniquePortList(unprocessedTCPPorts)
+		udpPorts := makeUniquePortList(unprocessedUDPPorts)
+
 		if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && len(tcpPorts) > 0 {
 			t := nmap.TCPPortPrefix + strings.Join(tcpPorts, ",")
 			tcp = []string{t}
 		} else if w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP {
-			log.Println("[!] No TCP ports found for services: " + targetServiceStr)
+			log.Println("[!] No unprocessed TCP ports found for services: " + targetServiceStr)
 		}
 
-		udpPorts := getUniquePortsForTargetsAndService(targets, nmap.UDP, w.TargetService)
 		if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && len(udpPorts) > 0 {
 			u := nmap.UDPPortPrefix + strings.Join(udpPorts, ",")
 			udp = []string{u}
 		} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
-			log.Println("[!] No UDP ports found for services: " + targetServiceStr)
+			log.Println("[!] No unprocessed UDP ports found for services: " + targetServiceStr)
 		}
 
-		// Skip worker if no matching ports found for any protocol the worker handles
+		// Skip worker if no unprocessed ports found for any protocol the worker handles
 		if len(tcp) == 0 && len(udp) == 0 {
-			log.Printf("[*] Skipping worker %s - no matching services found: %s",
+			log.Printf("[*] Skipping worker %s - no unprocessed matching services found: %s",
 				w.Description, targetServiceStr)
 			return false
 		}
 	} else {
+		// For workers without a target service, check if all targets processed
+		targetsToProcess = make([]*models.Target, 0, len(targets))
+		for _, target := range targets {
+			if !workerTracker.IsTrackedForTarget(project.ExecutionID, target, w) {
+				targetsToProcess = append(targetsToProcess, target)
+			}
+		}
+
+		if len(targetsToProcess) == 0 {
+			log.Printf("[*] Skipping worker %s - all targets already processed", w.Description)
+			return false
+		}
+
 		// Default implementation for workers without a target service
-		tcpPorts := getUniquePortsForTargets(targets, nmap.TCP)
+		tcpPorts := getUniquePortsForTargets(targetsToProcess, nmap.TCP)
 		if (w.Protocol == nmap.TCP || w.Protocol == nmap.TCPandUDP) && (tcpPorts == nil || len(tcpPorts) == 0) {
 			log.Println("[!] TCP ports nil or empty. setting all TCP ports")
 			cmd := nmap.NewCommand("")
@@ -206,7 +272,7 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) boo
 			tcp = []string{t}
 		}
 
-		udpPorts := getUniquePortsForTargets(targets, nmap.UDP)
+		udpPorts := getUniquePortsForTargets(targetsToProcess, nmap.UDP)
 		if (w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP) && (udpPorts == nil || len(udpPorts) == 0) {
 			fmt.Println("[!] UDP ports nil or empty. setting top 1000 UDP ports")
 			cmd := nmap.NewCommand("")
@@ -218,8 +284,26 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) boo
 		}
 	}
 
+	for _, target := range targetsToProcess {
+		workerTracker.TrackForTarget(project.ExecutionID, target, w)
+	}
+
 	appendPorts(tcp, udp, w)
 	return true
+}
+
+// Helper function to make a slice of ports unique
+func makeUniquePortList(ports []string) []string {
+	uniquePorts := make(map[string]bool)
+	for _, port := range ports {
+		uniquePorts[port] = true
+	}
+
+	result := make([]string, 0, len(uniquePorts))
+	for port := range uniquePorts {
+		result = append(result, port)
+	}
+	return result
 }
 
 // New helper function to get unique ports for a specific service
@@ -243,6 +327,10 @@ func getUniquePortsForTargetsAndService(batch []*models.Target, protocol string,
 func portsAreHardcoded(worker *models.Worker) bool {
 	for _, arg := range worker.Args {
 		trimmedArg := strings.TrimSpace(arg)
+		// Remove surrounding quotes if present
+		if strings.HasPrefix(trimmedArg, "\"") && strings.HasSuffix(trimmedArg, "\"") {
+			trimmedArg = trimmedArg[1 : len(trimmedArg)-1]
+		}
 		if strings.HasPrefix(trimmedArg, "-p") || trimmedArg == "-p-" || trimmedArg == "--top-ports" {
 			return true
 		}
