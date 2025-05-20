@@ -34,7 +34,7 @@ var (
 	workerTracker = NewWorkerTracker()
 
 	// Worker ID generation
-	uuidGen = helpers.IDGenerator()
+	uuidGen = helpers.Generator()
 )
 
 // WranglerRepository defines the interface for creating/managing projects.
@@ -79,7 +79,7 @@ func NewWranglerRepository(cli models.CLI) WranglerRepository {
 // NewProject creates a new Project (not yet started).
 func (wr *wranglerRepository) NewProject() *models.Project {
 
-	eid := uuidGen.Generate()
+	eid := uuidGen.UUIDv1()
 	project = &models.Project{
 		ExecutionID:      eid,
 		Name:             eid.String() + "_" + wr.cli.ProjectName,

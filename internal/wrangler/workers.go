@@ -32,7 +32,7 @@ func (wr *wranglerRepository) NewWorkerWithService(scan *models.Scan) models.Wor
 // DuplicateWorker duplicates an existing worker with a new ID
 func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Worker {
 	return models.Worker{
-		ID:                 uuidGen.Generate(),
+		ID:                 uuidGen.UUIDv1(),
 		Tool:               worker.Tool,
 		Args:               worker.Args,
 		Protocol:           worker.Protocol,
@@ -53,7 +53,7 @@ func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Work
 func (wr *wranglerRepository) returnWorkerInstance(scan *models.Scan) models.Worker {
 	wr.appendExclusions(&scan.Args)
 	return models.Worker{
-		ID:                 uuidGen.Generate(),
+		ID:                 uuidGen.UUIDv1(),
 		Tool:               scan.Tool,
 		Args:               scan.Args,
 		Protocol:           scan.Protocol,
@@ -108,7 +108,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 		}()
 
 		f := project.InScopeFile
-		taskId := uuidGen.Generate().String()
+		taskId := uuidGen.UUIDv1().String()
 
 		// Track which workers we'll actually run
 		var activeWorkers []models.Worker
@@ -192,7 +192,7 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) boo
 	if w.TargetService != nil && len(w.TargetService) > 0 {
 		targetServiceStr := strings.Join(w.TargetService, ", ")
 
-		// Generate unique ports while filtering out already processed targets
+		// UUIDv1 unique ports while filtering out already processed targets
 		var unprocessedTCPPorts []string
 		var unprocessedUDPPorts []string
 

@@ -5,16 +5,17 @@ import (
 	"sync"
 )
 
-type UUIDv1 struct {
+type UUID struct {
 	mu sync.Mutex
 }
 
-// IDGenerator creates and initializes a new UUIDv1
-func IDGenerator() *UUIDv1 {
-	return &UUIDv1{}
+// Generator creates and initializes a new UUID
+func Generator() *UUID {
+	return &UUID{}
 }
 
-func (r *UUIDv1) Generate() uuid.UUID {
+// UUIDv1 generates a UUIDv1
+func (r *UUID) UUIDv1() uuid.UUID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return uuid.Must(uuid.NewUUID())

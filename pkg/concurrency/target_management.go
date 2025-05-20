@@ -79,7 +79,7 @@ func (r *Registry[T]) ReadAndRemoveNFromRegistry(n int) []*T {
 		return []*T{}
 	}
 
-	// Generate the items to return as pointers
+	// UUIDv1 the items to return as pointers
 	result := make([]*T, count)
 	for i := 0; i < count; i++ {
 		// Create a local copy of the item at index i
