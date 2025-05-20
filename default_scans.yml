@@ -39,7 +39,6 @@ scan-collection:
       args:
         - "-p-"
         - "--open"
-        - "--closed"
         - "-v"
       service_discovery: true
       description: "TCP service discovery"
@@ -50,7 +49,6 @@ scan-collection:
         - "--top-ports"
         - "1000"
         - "--open"
-        - "--closed"
         - "-v"
       service_discovery: true
       description: "UDP service discovery"
