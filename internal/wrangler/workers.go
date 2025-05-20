@@ -330,15 +330,6 @@ func runWorker(w *models.Worker, args []string) {
 	log.Printf("[worker-%s] Completed", w.Description)
 }
 
-// Utility function to extract just the host IPs
-func extractHostIPs(batch []*models.Target) []string {
-	var list []string
-	for _, b := range batch {
-		list = append(list, b.Host)
-	}
-	return list
-}
-
 // runCommandCtx executes cmdName with args in its own process group and returns the cmd object, combined stdout/stderr, and error.
 func runCommandCtx(ctx context.Context, worker *models.Worker, args []string) (cmd *exec.Cmd, stdout, stderr chan string, errs chan error, startErr error) {
 	cmdName := worker.Tool
