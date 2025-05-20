@@ -81,7 +81,7 @@ func (wr *wranglerRepository) appendExclusions(args *[]string) {
 }
 
 // StartWorkers runs the "primary" scans in batches read from `serviceEnum`.
-// Now accepts an optional parent waitgroup to signal completion back to the caller
+// Now accepts an optional parent wait group to signal completion back to the caller
 func (wr *wranglerRepository) startWorkers(project *models.Project, workers []models.Worker, targets []*models.Target, parentWg *sync.WaitGroup) {
 	if targets == nil || len(targets) == 0 {
 		log.Println("[!] Input channel is nil or empty")
@@ -99,7 +99,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 
 	go func() {
 		defer wg.Done()
-		// When all work is done, signal to the parent waitgroup
+		// When all work is done, signal to the parent wait group
 		defer func() {
 			if parentWg != nil {
 				for range workers {
@@ -111,11 +111,27 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 		f := project.InScopeFile
 		taskId := uuid.Must(uuid.NewUUID()).String()
 
-		var workerWg sync.WaitGroup
-		log.Printf("[*] Starting %d workers", len(workers))
+		// Track which workers we'll actually run
+		var activeWorkers []models.Worker
+		var activeWorkerIndices []int
+
+		// First, determine which workers should run
 		for i := range workers {
 			w := &workers[i]
-			determineAndAssignScanPorts(w, targets)
+			if determineAndAssignScanPorts(w, targets) {
+				activeWorkers = append(activeWorkers, *w)
+				activeWorkerIndices = append(activeWorkerIndices, i)
+			} else {
+				log.Printf("[*] Skipping worker: %s (no matching services in targets)", w.Description)
+			}
+		}
+
+		var workerWg sync.WaitGroup
+		log.Printf("[*] Starting %d of %d workers (skipped %d)",
+			len(activeWorkers), len(workers), len(workers)-len(activeWorkers))
+
+		for i := range activeWorkers {
+			w := &activeWorkers[i]
 			workerWg.Add(1)
 			go func(w *models.Worker, localPath string) {
 				defer workerWg.Done()
@@ -134,6 +150,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 				runWorker(w, args)
 			}(w, f)
 		}
+
 		log.Printf("[*] Worker run initiated")
 		workerWg.Wait()
 		log.Printf("[*] Worker run completed")
@@ -141,12 +158,15 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 	return
 }
 
-func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
+// determineAndAssignScanPorts configures ports for workers and returns false if the worker should be skipped (no matching services found)
+func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) bool {
 	if portsAreHardcoded(w) {
-		return
+		return true // Always run workers with hardcoded ports
 	}
+
 	var udp []string
 	var tcp []string
+
 	// If worker has targetService specified, filter ports by service
 	if w.TargetService != nil && len(w.TargetService) > 0 {
 		targetServiceStr := strings.Join(w.TargetService, ", ")
@@ -165,6 +185,13 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 			udp = []string{u}
 		} else if w.Protocol == nmap.UDP || w.Protocol == nmap.TCPandUDP {
 			log.Println("[!] No UDP ports found for services: " + targetServiceStr)
+		}
+
+		// Skip worker if no matching ports found for any protocol the worker handles
+		if len(tcp) == 0 && len(udp) == 0 {
+			log.Printf("[*] Skipping worker %s - no matching services found: %s",
+				w.Description, targetServiceStr)
+			return false
 		}
 	} else {
 		// Default implementation for workers without a target service
@@ -190,7 +217,9 @@ func determineAndAssignScanPorts(w *models.Worker, targets []*models.Target) {
 			udp = []string{u}
 		}
 	}
+
 	appendPorts(tcp, udp, w)
+	return true
 }
 
 // New helper function to get unique ports for a specific service
@@ -302,7 +331,7 @@ func runWorker(w *models.Worker, args []string) {
 	output, err := c.CombinedOutput()
 
 	if w.WorkerResponse != nil {
-		log.Printf("[*] '%s' - Non-empty response detected: %s", w.Description, string(output))
+		log.Printf("[*] '%s' - Non-empty response detected [*]\n %s", w.Description, string(output))
 		w.WorkerResponse <- string(output)
 	}
 
