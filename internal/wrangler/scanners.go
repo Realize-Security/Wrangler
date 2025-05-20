@@ -98,7 +98,7 @@ func (wr *wranglerRepository) startScanProcess() {
 		log.Println("[*] Service enumeration phase completed")
 	}()
 
-	// Step 3: Start primary scanners. Depends on serviceEnumeration
+	// Step 3: Start template scanners. Depends on serviceEnumeration
 	mainWg.Add(1)
 	go func() {
 		defer mainWg.Done()
@@ -223,13 +223,19 @@ func (wr *wranglerRepository) staticScanners(workers []models.Worker) {
 		log.Printf("[*] Starting %d static scanners", len(workers))
 		targets := wr.staticTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		var batchWG sync.WaitGroup
-		batchWG.Add(len(workers))
+		batchWorkers := make([]models.Worker, 0)
+		for _, tw := range workers {
+			w := wr.DuplicateWorker(&tw)
+			batchWorkers = append(batchWorkers, w)
+		}
 
-		wr.startWorkers(project, workers, targets, &batchWG)
-		wr.SetupSignalHandler(workers, sigCh)
-		wr.DrainWorkerErrors(workers, errCh)
-		wr.ListenToWorkerErrors(workers, errCh)
+		var batchWG sync.WaitGroup
+		batchWG.Add(len(batchWorkers))
+
+		wr.startWorkers(project, batchWorkers, targets, &batchWG)
+		wr.SetupSignalHandler(batchWorkers, sigCh)
+		wr.DrainWorkerErrors(batchWorkers, errCh)
+		wr.ListenToWorkerErrors(batchWorkers, errCh)
 
 		log.Printf("[*] Static scanner batch %d running", count)
 		count++
@@ -293,14 +299,20 @@ func (wr *wranglerRepository) templateScanners(workers []models.Worker) {
 
 		targets := wr.templateTargets.ReadAndRemoveNFromRegistry(wr.cli.BatchSize)
 
-		var batchWG sync.WaitGroup
-		batchWG.Add(len(workers))
+		batchWorkers := make([]models.Worker, 0)
+		for _, tw := range workers {
+			w := wr.DuplicateWorker(&tw)
+			batchWorkers = append(batchWorkers, w)
+		}
 
-		log.Printf("[*] Starting %d template scanners", len(workers))
-		wr.startWorkers(project, workers, targets, &batchWG)
-		wr.SetupSignalHandler(workers, sigCh)
-		wr.DrainWorkerErrors(workers, errCh)
-		wr.ListenToWorkerErrors(workers, errCh)
+		var batchWG sync.WaitGroup
+		batchWG.Add(len(batchWorkers))
+
+		log.Printf("[*] Starting %d template scanners", len(batchWorkers))
+		wr.startWorkers(project, batchWorkers, targets, &batchWG)
+		wr.SetupSignalHandler(batchWorkers, sigCh)
+		wr.DrainWorkerErrors(batchWorkers, errCh)
+		wr.ListenToWorkerErrors(batchWorkers, errCh)
 		log.Println("[*] Templated scanners batch running")
 
 		phaseBatchesWG.Add(1)
