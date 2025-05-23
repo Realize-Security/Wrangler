@@ -50,6 +50,14 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 			stdout := <-outChan
 			stderr := <-stderrChan
 			err := <-errChan
+
+			// DEBUG: Log first 200 chars of output
+			preview := stdout
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			log.Printf("[DEBUG] Worker %s output: %s", dw.ID.String(), preview)
+
 			dw.WorkerResponse <- stdout
 			if err != nil {
 				if stderr != "" {
@@ -63,7 +71,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 			dw.Finished = time.Now()
 			close(dw.WorkerResponse)
 			cancel()
-			dw.UserCommand <- "run"
 		}(w)
 	}
 

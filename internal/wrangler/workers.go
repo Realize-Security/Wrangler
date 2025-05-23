@@ -31,10 +31,14 @@ func (wr *wranglerRepository) NewWorkerWithService(scan *models.Scan) models.Wor
 
 // DuplicateWorker duplicates an existing worker with a new ID
 func (wr *wranglerRepository) DuplicateWorker(worker *models.Worker) models.Worker {
+	// Deep copy the args
+	argsCopy := make([]string, len(worker.Args))
+	copy(argsCopy, worker.Args)
+
 	return models.Worker{
 		ID:                 uuidGen.UUIDv1(),
 		Tool:               worker.Tool,
-		Args:               worker.Args,
+		Args:               argsCopy, // Use the copy
 		Protocol:           worker.Protocol,
 		Description:        worker.Description,
 		TargetService:      worker.TargetService,
