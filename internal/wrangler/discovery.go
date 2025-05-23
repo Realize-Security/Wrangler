@@ -78,7 +78,8 @@ func (wr *wranglerRepository) createDiscoveryWorkers(templates []models.Worker, 
 	var workers []models.Worker
 
 	// Create chunk files and workers for each chunk
-	for i, chunk := range chunkSlice(inScope, batchSize) {
+	chunks := chunkSlice(inScope, batchSize)
+	for i, chunk := range chunks {
 		chunkFile, err := wr.createChunkFile(scopeDir, i, chunk)
 		if err != nil {
 			continue
