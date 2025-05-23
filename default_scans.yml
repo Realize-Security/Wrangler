@@ -19,6 +19,7 @@ scope-assignment:
     description: "Command line flag for assigning input file for Nmap."
 
 scan-collection:
+  - description: "Ping scan for initial host discovery"
   - scan-item:
       tool: "nmap"
       args:
@@ -32,17 +33,17 @@ scan-collection:
         - "-PM"
         - "-v"
       host_discovery: true
-      description: "Ping scan for initial host discovery"
 
   - scan-item:
+      description: "TCP service discovery"
       tool: "nmap"
       args:
         - "-p-"
         - "-v"
       service_discovery: true
-      description: "TCP service discovery"
 
   - scan-item:
+      description: "UDP service discovery"
       tool: "nmap"
       args:
         - "--top-ports"
@@ -50,15 +51,14 @@ scan-collection:
         - "-v"
       service_discovery: true
       protocol: "udp"
-      description: "UDP service discovery"
 
   - scan-item:
+      description: "All nmap vuln scanning scripts except SMB"
       tool: "nmap"
       args:
         - "--script"
         - "vuln and not smb-vuln-*"
       protocol: "tcp"
-      description: "All nmap vuln scanning scripts except SMB"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
@@ -96,7 +96,7 @@ scan-collection:
       protocol: "both"
 
   - scan-item:
-      description: "UDP SNMP all except brute on default 161"
+      description: "SNMP all except brute on default 161"
       services: ["snmp"]
       tool: "nmap"
       args:
@@ -128,7 +128,7 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
-      description: "TCP FTP scripts on all ports"
+      description: "FTP scripts on all ports"
       tool: "nmap"
       services: ["ftp"]
       args:
@@ -138,7 +138,7 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
-      description: "TCP RDP scripts on all ports"
+      description: "RDP scripts on all ports"
       tool: "nmap"
       services: ["rdp"]
       args:
@@ -148,7 +148,7 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
-      description: "TCP SMB scripts on all ports"
+      description: "SMB scripts on all ports"
       tool: "nmap"
       services: ["smb"]
       args:
@@ -158,7 +158,7 @@ scan-collection:
       protocol: "tcp"
 
   - scan-item:
-      description: "UDP NTP scripts on all ports"
+      description: "NTP scripts on all ports"
       tool: "nmap"
       services: ["ntp"]
       args:

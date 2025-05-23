@@ -43,7 +43,7 @@ Examples:
   ./wrangler --project-name=my_scan --scope=ip_addresses.txt --debug-workers
 
 Options:
-  --project-name      Name for the project (required)
+  --project-name     Name for the project (required)
   --scope            Files containing target IP addresses or FQDNs (required, path)
   --exclude          File listing IPs/FQDNs to exclude from scans (path)
   --output           Output folder (defaults to stdout)
