@@ -3,7 +3,6 @@ package wrangler
 import (
 	"Wrangler/internal/files"
 	"Wrangler/pkg/models"
-	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -35,13 +34,13 @@ var (
 func (wr *wranglerRepository) startScanProcess() {
 	tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
 	if err != nil {
-		fmt.Printf("unable to create temp scope file directory: %s", err)
+		log.Printf("unable to create temp scope file directory: %s", err)
 	}
 
 	defer func(name string) {
 		err = os.RemoveAll(name)
 		if err != nil {
-			fmt.Printf("unable to delete temp scope file directory: %s", err)
+			log.Printf("unable to delete temp scope file directory: %s", err)
 		}
 	}(tempDir)
 

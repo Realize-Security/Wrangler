@@ -8,4 +8,5 @@ type CLI struct {
 	PatternFile  string `name:"scan-patterns" help:"YML file containing scan patterns"`
 	BatchSize    int    `name:"batch-size" help:"Number of hosts to add to Nmap batches"`
 	DebugWorkers bool   `name:"debug-workers" help:"Add print statements for worker output"`
+	LogFile      string `kong:"name='log-file',help='Path to log file or directory for logging all output'"`
 }
