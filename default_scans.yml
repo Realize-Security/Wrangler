@@ -166,3 +166,23 @@ scan-collection:
         - "--script"
         - "ntp-info,ntp-monlist"
       protocol: "udp"
+
+  - scan-item:
+      description: "LDAP and LDAPS enumeration"
+      tool: "nmap"
+      services: ["ldap"]
+      protocol: "tcp"
+      args:
+        - "-sT"
+        - "--script"
+        - "ldap-* and not ldap-brute.nse"
+
+  - scan-item:
+      description: "MSSQL enumeration"
+      tool: "nmap"
+      services: [ "mssql" ]
+      protocol: "tcp"
+      args:
+        - "-sT"
+        - "--script"
+        - "ms-sql-* and not ms-sql-brute.nse"
