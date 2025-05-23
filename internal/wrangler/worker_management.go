@@ -19,37 +19,96 @@ import (
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.
 // If the nmap output indicates "Host is up", we send that host to `serviceEnum`.
 // Returns a channel that is closed when all processing is complete.
-func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) {
+func (wr *wranglerRepository) DiscoveryResponseMonitor(workers []models.Worker) chan struct{} {
 	var wg sync.WaitGroup
-	wg.Add(len(workers))
+	ready := make(chan struct{})
 
-	for _, w := range workers {
-		w := w
-		go func() {
-			for resp := range w.WorkerResponse {
-				if strings.Contains(resp, "Host is up (") {
-					hosts := getUpHosts(resp)
-					for _, host := range hosts {
-						if host != "" {
-							log.Printf("[*] Found live host: %s", host)
-							t := models.Target{Host: host}
-							wr.staticTargets.Add(t)
-							wr.serviceEnum.Add(t)
-						} else {
-							// If we've hit an empty string, the rest of the []string is presumed empty
-							log.Println("[*] Empty string in discovery response checks")
-							break
-						}
+	// Set up all monitors first
+	for i := range workers {
+		w := &workers[i]
+		wg.Add(1)
+
+		go func(worker *models.Worker) {
+			defer wg.Done()
+
+			log.Printf("[*] Monitor ready for discovery worker %s", worker.ID.String())
+
+			// Read from the worker response channel
+			for resp := range worker.WorkerResponse {
+				if resp == "" {
+					log.Printf("[*] Worker %s returned empty response", worker.ID.String())
+					continue
+				}
+
+				// Log the response for debugging
+				log.Printf("[*] Worker %s response length: %d bytes", worker.ID.String(), len(resp))
+
+				// Parse the response for live hosts
+				hosts := parseDiscoveryOutput(resp)
+				log.Printf("[*] Worker %s found %d live hosts", worker.ID.String(), len(hosts))
+
+				for _, host := range hosts {
+					if host != "" {
+						log.Printf("[*] Found live host: %s", host)
+						t := models.Target{Host: host}
+						wr.staticTargets.Add(t)
+						wr.serviceEnum.Add(t)
 					}
 				}
 			}
-		}()
+
+			log.Printf("[*] Monitor finished for worker %s", worker.ID.String())
+		}(w)
 	}
+
+	// Signal that all monitors are set up
+	close(ready)
 
 	go func() {
 		wg.Wait()
-		log.Println("[*] All responses monitored, service enumeration channel closed.")
+		log.Println("[*] All discovery responses monitored")
 	}()
+
+	return ready
+}
+
+func parseDiscoveryOutput(output string) []string {
+	var hosts []string
+	seen := make(map[string]bool)
+
+	lines := strings.Split(output, "\n")
+
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+
+		if strings.HasPrefix(line, "Nmap scan report for") {
+			if strings.Contains(line, "[host down]") {
+				continue
+			}
+
+			ip := helpers.ExtractIPv4FromString(line)
+			if ip != "" && !seen[ip] {
+				isUp := false
+				for j := i + 1; j < len(lines) && j < i+5; j++ {
+					if strings.Contains(lines[j], "Host is up") {
+						isUp = true
+						break
+					}
+					if strings.HasPrefix(strings.TrimSpace(lines[j]), "Nmap scan report for") {
+						break
+					}
+				}
+
+				if isUp {
+					hosts = append(hosts, ip)
+					seen[ip] = true
+					log.Printf("[parseDiscoveryOutput] Found live host: %s", ip)
+				}
+			}
+		}
+	}
+
+	return hosts
 }
 
 // MonitorServiceEnum parses each Nmap XML from the service enumeration stage & pushes open hosts/ports.
@@ -105,28 +164,6 @@ func (wr *wranglerRepository) MonitorServiceEnum(workers []models.Worker) {
 			}
 		}(w)
 	}
-}
-
-// getUpHosts extract IPv4 addresses from Nmap stdout
-func getUpHosts(output string) []string {
-	lines := strings.Split(output, "\n")
-	res := make([]string, len(lines))
-	i := 0
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "Nmap scan report for") {
-			continue
-		}
-		if strings.HasSuffix(line, "[host down]") {
-			continue
-		}
-		ip := helpers.ExtractIPv4FromString(line)
-		res[i] = ip
-		i++
-	}
-	if len(res) > 0 {
-		return res
-	}
-	return nil
 }
 
 func (wr *wranglerRepository) SetupSignalHandler(workers []models.Worker, sigCh <-chan os.Signal) {
