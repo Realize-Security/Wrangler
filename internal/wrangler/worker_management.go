@@ -102,7 +102,7 @@ func parseDiscoveryOutput(output string) []string {
 				if isUp {
 					hosts = append(hosts, ip)
 					seen[ip] = true
-					log.Printf("[parseDiscoveryOutput] Found live host: %s", ip)
+					log.Printf("[*] Found live host: %s", ip)
 				}
 			}
 		}
