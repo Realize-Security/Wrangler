@@ -19,8 +19,9 @@ scope-assignment:
     description: "Command line flag for assigning input file for Nmap."
 
 scan-collection:
-  - description: "Ping scan for initial host discovery"
+
   - scan-item:
+      description: "Ping scan for initial host discovery"
       tool: "nmap"
       args:
         - "-sn"
