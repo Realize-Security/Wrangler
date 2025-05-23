@@ -1,6 +1,7 @@
 package wrangler
 
 import (
+	"Wrangler/internal/files"
 	"Wrangler/internal/nmap"
 	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
@@ -89,7 +90,7 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 	if targets == nil || len(targets) == 0 {
 		log.Println("[!] Input channel is nil or empty")
 		if parentWg != nil {
-			// Make sure we still decrement the wait counter even if no work was done
+			// Decrement the wait counter even if no work was done
 			for range workers {
 				parentWg.Done()
 			}
@@ -111,8 +112,32 @@ func (wr *wranglerRepository) startWorkers(project *models.Project, workers []mo
 			}
 		}()
 
-		f := project.InScopeFile
 		taskId := uuidGen.UUIDv1().String()
+
+		// Create a temporary directory for this batch
+		tempDir, err := files.MakeTempDir(project.ProjectBase, project.TempPrefix)
+		if err != nil {
+			log.Printf("[!] Failed to create temp dir: %v", err)
+			return
+		}
+		defer os.RemoveAll(tempDir)
+
+		// Extract just the host IPs from targets
+		hostIPs := make([]string, 0, len(targets))
+		for _, target := range targets {
+			hostIPs = append(hostIPs, target.Host)
+		}
+
+		// Write targets to temporary file
+		tempFile := fmt.Sprintf("batch_%s.txt", taskId)
+		batchFile, err := files.WriteSliceToFile(tempDir, tempFile, hostIPs)
+		if err != nil {
+			log.Printf("[!] Failed to write batch file: %v", err)
+			return
+		}
+
+		log.Printf("[*] Created batch file %s with %d targets", batchFile, len(hostIPs))
+		f := batchFile
 
 		// Track which workers we'll actually run
 		var activeWorkers []models.Worker
