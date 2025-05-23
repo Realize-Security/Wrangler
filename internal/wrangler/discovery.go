@@ -50,6 +50,14 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 			stdout := <-outChan
 			stderr := <-stderrChan
 			err := <-errChan
+
+			// DEBUG: Log first 200 chars of output
+			preview := stdout
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			log.Printf("[DEBUG] Worker %s output: %s", dw.ID.String(), preview)
+
 			dw.WorkerResponse <- stdout
 			if err != nil {
 				if stderr != "" {
@@ -63,7 +71,6 @@ func (wr *wranglerRepository) DiscoveryScan(workers []models.Worker, wg *sync.Wa
 			dw.Finished = time.Now()
 			close(dw.WorkerResponse)
 			cancel()
-			dw.UserCommand <- "run"
 		}(w)
 	}
 
@@ -78,7 +85,8 @@ func (wr *wranglerRepository) createDiscoveryWorkers(templates []models.Worker, 
 	var workers []models.Worker
 
 	// Create chunk files and workers for each chunk
-	for i, chunk := range chunkSlice(inScope, batchSize) {
+	chunks := chunkSlice(inScope, batchSize)
+	for i, chunk := range chunks {
 		chunkFile, err := wr.createChunkFile(scopeDir, i, chunk)
 		if err != nil {
 			continue
@@ -95,23 +103,39 @@ func (wr *wranglerRepository) createDiscoveryWorkers(templates []models.Worker, 
 }
 
 func (wr *wranglerRepository) createWorkerFromTemplate(template models.Worker, scopeFile string) models.Worker {
-	// Create a deep copy of the template
 	worker := wr.DuplicateWorker(&template)
-
-	// Add scope arguments
 	worker.Args = append(worker.Args, worker.ScopeArg, scopeFile)
 	return worker
 }
 
+// startAndMonitorWorkers schedules and initiates monitoring and workers
 func (wr *wranglerRepository) startAndMonitorWorkers(workers []models.Worker) {
 	var wg sync.WaitGroup
 	wg.Add(len(workers))
 
+	// Set up monitors BEFORE starting workers
+	monitorReady := make(chan struct{})
+
+	// Start monitoring in a goroutine but signal when ready
+	go func() {
+		wr.DiscoveryResponseMonitor(workers)
+		close(monitorReady) // Signal that monitors are ready
+	}()
+
+	// Wait for monitors to be ready before starting workers
+	<-monitorReady
+	time.Sleep(100 * time.Millisecond) // Small buffer to ensure goroutines are scheduled
+
+	// Start the discovery scan
 	wr.DiscoveryScan(workers, &wg)
-	wr.DiscoveryResponseMonitor(workers)
+
+	// Set up error handling
 	wr.DrainWorkerErrors(workers, errCh)
 	wr.ListenToWorkerErrors(workers, errCh)
 	wr.SetupSignalHandler(workers, sigCh)
+
+	// Wait for all workers to complete
+	wg.Wait()
 }
 
 func (wr *wranglerRepository) createChunkFile(dir string, index int, chunk []string) (string, error) {
