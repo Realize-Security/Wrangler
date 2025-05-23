@@ -7,11 +7,24 @@ service-aliases:
     aliases: ["www", "http-alt", "websocket", "https"]
   - services: "ftp"
     aliases: ["sftp", "ftps"]
+  - services: "mssql"
+    aliases: ["ms-sql-s"]
+  - services: "rpc"
+    aliases: [ "rpcbind" ]
+  - services: "pop3"
+    aliases: [ "pop3s", "Dovecot pop3d" ]
+  - services: "smtp"
+    aliases: [ "smtps" ]
+  - services: "dns"
+    aliases: [ "domain", "BIND" ]
+  - services: "nfs"
+    aliases: [ "2-4 (RPC"]
 
 # Define common args as array of separate arguments
 common-nmap-args: &common-nmap-args
   - "--max-retries"
-  - "2"
+  - "3"
+  - "-T4"
 
 scope-assignment:
   - tool: "nmap"
@@ -187,3 +200,79 @@ scan-collection:
         - "-sT"
         - "--script"
         - "ms-sql-* and not ms-sql-brute.nse"
+
+  - scan-item:
+      description: "RPC enumeration"
+      tool: "nmap"
+      services: [ "rpc" ]
+      protocol: "tcp"
+      args:
+        - "-sT"
+        - "--script"
+        - "(rpc* and msrpc-enum.nse) and not rpcap-brute.nse "
+
+  - scan-item:
+      description: "RMI enumeration"
+      tool: "nmap"
+      services: [ "rmi" ]
+      protocol: "tcp"
+      args:
+        - "-sT"
+        - "--script"
+        - "rmi-dumpregistry.nse"
+
+  - scan-item:
+      description: "NFS enumeration"
+      tool: "nmap"
+      services: [ "nfs" ]
+      protocol: "tcp"
+      args:
+        - "-sT"
+        - "--script"
+        - "nfs-*"
+
+  - scan-item:
+      description: "NTP enumeration"
+      tool: "nmap"
+      services: [ "ntp" ]
+      protocol: "udp"
+      args:
+        - "-sU"
+        - "--script"
+        - "ntp-*"
+
+  - scan-item:
+      description: "DNS enumeration"
+      tool: "nmap"
+      services: [ "dns" ]
+      protocol: "both"
+      args:
+        - "--script"
+        - "dns-* and not dns-brute"
+
+  - scan-item:
+      description: "POP3 enumeration"
+      tool: "nmap"
+      services: [ "pop3" ]
+      protocol: "tcp"
+      args:
+        - "--script"
+        - "pop3-* and not pop3-brute"
+
+  - scan-item:
+      description: "SMTP enumeration"
+      tool: "nmap"
+      services: [ "smtp" ]
+      protocol: "tcp"
+      args:
+        - "--script"
+        - "smtp-* and not smtp-brute"
+
+  - scan-item:
+      description: "TFTP enumeration"
+      tool: "nmap"
+      services: [ "tftp" ]
+      protocol: "udp"
+      args:
+        - "--script"
+        - "tftp-*"
