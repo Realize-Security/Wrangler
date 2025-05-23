@@ -89,7 +89,6 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	}
 
 	if wr.cli.BatchSize > 0 {
-		fmt.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
 		batchSize = wr.cli.BatchSize
 	}
 
@@ -105,7 +104,7 @@ func (wr *wranglerRepository) NewProject() *models.Project {
 	report := path.Join(cwd, wr.cli.Output, helpers.SpacesToUnderscores(project.Name))
 	err = files.CreateDir(report)
 	if err != nil {
-		fmt.Printf("[!] Failed to create report directory: %v\n", err)
+		log.Printf("[!] Failed to create report directory: %v\n", err)
 		os.Exit(1)
 	}
 	project.ReportDirParent = report
@@ -128,6 +127,8 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	log.Printf("[*] Initiating Project '%s' with Execution ID: '%s'", wr.cli.ProjectName, project.ExecutionID.String())
 	logProjectDetails(project)
 
+	log.Printf("Nmap batch size set to: %d\n", wr.cli.BatchSize)
+
 	// Flatten & write scope exclusion
 	var excludeHosts []string
 	var exclude string
@@ -135,7 +136,7 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	if wr.cli.ScopeExclude != "" {
 		excludeHosts, err = wr.FlattenScopes(wr.cli.ScopeExclude)
 		if err != nil {
-			fmt.Printf(err.Error())
+			log.Printf(err.Error())
 			return
 		}
 		exclude, err = files.WriteSliceToFile(scopeDir, excludeFile, excludeHosts)
@@ -148,13 +149,13 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	defer func() {
 		entries, err := os.ReadDir(project.ProjectBase)
 		if err != nil {
-			fmt.Printf("[!] unable to list directory: %s. Error: %s", project.ProjectBase, err)
+			log.Printf("[!] unable to list directory: %s. Error: %s", project.ProjectBase, err)
 		}
 		for _, entry := range entries {
 			if entry.IsDir() && strings.HasPrefix(entry.Name(), project.TempPrefix) {
 				err = os.RemoveAll(entry.Name())
 				if err != nil {
-					fmt.Printf("[!] failed to delete temp directory: %s. Error: %s", entry.Name(), err)
+					log.Printf("[!] failed to delete temp directory: %s. Error: %s", entry.Name(), err)
 				}
 			}
 		}
@@ -164,23 +165,23 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 	if wr.cli.ScopeFiles != "" {
 		inScope, err = wr.FlattenScopes(wr.cli.ScopeFiles)
 		if err != nil {
-			fmt.Printf(err.Error())
+			log.Printf(err.Error())
 			return
 		}
 
 		err = files.CreateDir(scopeDir)
 		if err != nil {
-			fmt.Printf("[!] Failed to create scope directory: %v\n", err)
+			log.Printf("[!] Failed to create scope directory: %v\n", err)
 			os.Exit(1)
 		}
 		inScopePath, err := files.WriteSliceToFile(scopeDir, inScopeFile, inScope)
 		if err != nil {
-			fmt.Printf("[!] Failed to write targets to file: %v\n", err)
+			log.Printf("[!] Failed to write targets to file: %v\n", err)
 			os.Exit(1)
 		}
 
 		project.InScopeFile = inScopePath
-		fmt.Printf("[*] Created single scope file: %s\n", project.InScopeFile)
+		log.Printf("[*] Created single scope file: %s\n", project.InScopeFile)
 	}
 	project.InScopeHosts = inScope
 }
@@ -209,7 +210,7 @@ func (wr *wranglerRepository) loadWorkers() {
 	// Check binaries are installed in PATH
 	err = setToolBinPath(scans)
 	if err != nil {
-		fmt.Printf("[!] Error encountered validating worker binaries: %s", err.Error())
+		log.Printf("[!] Error encountered validating worker binaries: %s", err.Error())
 		os.Exit(1)
 	}
 	initializeServiceAliases(aliases.Aliases)

@@ -30,3 +30,4 @@ discovered-*
 ./main
 **/.temp-*
 ./.temp-*
+**/*.log
