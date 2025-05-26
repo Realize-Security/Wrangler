@@ -10,20 +10,19 @@ service-aliases:
   - services: "mssql"
     aliases: ["ms-sql-s"]
   - services: "rpc"
-    aliases: [ "rpcbind" ]
+    aliases: ["rpcbind"]
   - services: "pop3"
-    aliases: [ "pop3s", "Dovecot pop3d" ]
+    aliases: ["pop3s", "Dovecot pop3d"]
   - services: "smtp"
-    aliases: [ "smtps" ]
+    aliases: ["smtps"]
   - services: "dns"
-    aliases: [ "domain", "BIND" ]
+    aliases: ["domain", "BIND"]
   - services: "nfs"
-    aliases: [ "2-4 (RPC"]
+    aliases: ["2-4 (RPC"]
 
-# Define common args as array of separate arguments
+# Define common args as array that can be referenced
 common-nmap-args: &common-nmap-args
-  - "--max-retries"
-  - "3"
+  - "--max-retries 3"
   - "-T4"
 
 scope-assignment:
@@ -32,27 +31,17 @@ scope-assignment:
     description: "Command line flag for assigning input file for Nmap."
 
 scan-collection:
-
   - scan-item:
       description: "Ping scan for initial host discovery"
       tool: "nmap"
-      args:
-        - "-sn"
-        - "-PS21,22,80,443,3389"
-        - "-PA80,443"
-        - "-PU40125"
-        - "-PY80,443"
-        - "-PE"
-        - "-PP"
-        - "-PM"
-        - "-v"
+      args: "-sn -PS21,22,80,443,3389 -PA80,443 -PU40125 -PY80,443 -PE -PP -PM -v"
       host_discovery: true
 
   - scan-item:
       description: "TCP service discovery"
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-p-"
         - "-v"
       service_discovery: true
@@ -61,9 +50,8 @@ scan-collection:
       description: "UDP service discovery"
       tool: "nmap"
       args:
-        - &common-nmap-args
-        - "--top-ports"
-        - "1000"
+        - *common-nmap-args
+        - "--top-ports 1000"
         - "-v"
       service_discovery: true
       protocol: "udp"
@@ -72,16 +60,15 @@ scan-collection:
       description: "All nmap vuln scanning scripts except SMB"
       tool: "nmap"
       args:
-        - &common-nmap-args
-        - "--script"
-        - "vuln and not smb-vuln-*"
+        - *common-nmap-args
+        - "--script 'vuln and not smb-vuln-*'"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP all ports default scripts and versions"
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sTV"
       protocol: "tcp"
       scripts: ""
@@ -90,30 +77,27 @@ scan-collection:
       description: "TCP all ports SSL ciphers"
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ssl-enum-ciphers"
+        - "--script ssl-enum-ciphers"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP all ports and all SSL scripts"
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ssl-*,sslv2-* and not ssl-enum-ciphers"
+        - "--script 'ssl-*,sslv2-* and not ssl-enum-ciphers'"
       protocol: "tcp"
 
   - scan-item:
       description: "TCP UDP common admin interfaces"
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sTUV"
-        - "-p"
-        - "T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"
+        - "-p T:20,21,22,3389,445,111,2049,512,513,514,U:69,161"
       protocol: "both"
 
   - scan-item:
@@ -121,12 +105,10 @@ scan-collection:
       services: ["snmp"]
       tool: "nmap"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sU"
-        - "--script"
-        - "snmp-* and not snmp-brute.nse"
-        - "-p"
-        - "161"
+        - "--script 'snmp-* and not snmp-brute.nse'"
+        - "-p 161"
       protocol: "udp"
 
   - scan-item:
@@ -134,10 +116,9 @@ scan-collection:
       tool: "nmap"
       services: ["ssh"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ssh2-enum-algos"
+        - "--script ssh2-enum-algos"
       protocol: "tcp"
 
   - scan-item:
@@ -145,10 +126,9 @@ scan-collection:
       tool: "nmap"
       services: ["ssh"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ssh-* and not (ssh2-enum-algos or ssh-brute)"
+        - "--script 'ssh-* and not (ssh2-enum-algos or ssh-brute)'"
       protocol: "tcp"
 
   - scan-item:
@@ -156,10 +136,9 @@ scan-collection:
       tool: "nmap"
       services: ["ftp"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ftp-* and not ftp-brute"
+        - "--script 'ftp-* and not ftp-brute'"
       protocol: "tcp"
 
   - scan-item:
@@ -167,10 +146,9 @@ scan-collection:
       tool: "nmap"
       services: ["rdp"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "rdp-*"
+        - "--script rdp-*"
       protocol: "tcp"
 
   - scan-item:
@@ -178,10 +156,9 @@ scan-collection:
       tool: "nmap"
       services: ["smb"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "smb-* and not smb-brute.nse"
+        - "--script 'smb-* and not smb-brute.nse'"
       protocol: "tcp"
 
   - scan-item:
@@ -189,10 +166,9 @@ scan-collection:
       tool: "nmap"
       services: ["ntp"]
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sU"
-        - "--script"
-        - "ntp-info,ntp-monlist"
+        - "--script ntp-info,ntp-monlist"
       protocol: "udp"
 
   - scan-item:
@@ -201,102 +177,92 @@ scan-collection:
       services: ["ldap"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ldap-* and not ldap-brute.nse"
+        - "--script 'ldap-* and not ldap-brute.nse'"
 
   - scan-item:
       description: "MSSQL enumeration"
       tool: "nmap"
-      services: [ "mssql" ]
+      services: ["mssql"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "ms-sql-* and not ms-sql-brute.nse"
+        - "--script 'ms-sql-* and not ms-sql-brute.nse'"
 
   - scan-item:
       description: "RPC enumeration"
       tool: "nmap"
-      services: [ "rpc" ]
+      services: ["rpc"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "(rpc* and msrpc-enum.nse) and not rpcap-brute.nse "
+        - "--script '(rpc* and msrpc-enum.nse) and not rpcap-brute.nse'"
 
   - scan-item:
       description: "RMI enumeration"
       tool: "nmap"
-      services: [ "rmi" ]
+      services: ["rmi"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "rmi-dumpregistry.nse"
+        - "--script rmi-dumpregistry.nse"
 
   - scan-item:
       description: "NFS enumeration"
       tool: "nmap"
-      services: [ "nfs" ]
+      services: ["nfs"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sT"
-        - "--script"
-        - "nfs-*"
+        - "--script nfs-*"
 
   - scan-item:
       description: "NTP enumeration"
       tool: "nmap"
-      services: [ "ntp" ]
+      services: ["ntp"]
       protocol: "udp"
       args:
-        - &common-nmap-args
+        - *common-nmap-args
         - "-sU"
-        - "--script"
-        - "ntp-*"
+        - "--script ntp-*"
 
   - scan-item:
       description: "DNS enumeration"
       tool: "nmap"
-      services: [ "dns" ]
+      services: ["dns"]
       protocol: "both"
       args:
-        - &common-nmap-args
-        - "--script"
-        - "dns-* and not dns-brute"
+        - *common-nmap-args
+        - "--script 'dns-* and not dns-brute'"
 
   - scan-item:
       description: "POP3 enumeration"
       tool: "nmap"
-      services: [ "pop3" ]
+      services: ["pop3"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
-        - "--script"
-        - "pop3-* and not pop3-brute"
+        - *common-nmap-args
+        - "--script 'pop3-* and not pop3-brute'"
 
   - scan-item:
       description: "SMTP enumeration"
       tool: "nmap"
-      services: [ "smtp" ]
+      services: ["smtp"]
       protocol: "tcp"
       args:
-        - &common-nmap-args
-        - "--script"
-        - "smtp-* and not smtp-brute"
+        - *common-nmap-args
+        - "--script 'smtp-* and not smtp-brute'"
 
   - scan-item:
       description: "TFTP enumeration"
       tool: "nmap"
-      services: [ "tftp" ]
+      services: ["tftp"]
       protocol: "udp"
       args:
-        - &common-nmap-args
-        - "--script"
-        - "tftp-*"
+        - *common-nmap-args
+        - "--script tftp-*"

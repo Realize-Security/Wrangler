@@ -5,11 +5,13 @@ import (
 	"strings"
 )
 
+// ServiceAlias represents a service and its aliases
 type ServiceAlias struct {
-	Service string   `yaml:"service"`
-	Aliases []string `yaml:"aliases"`
+	Services string   `yaml:"services"`
+	Aliases  []string `yaml:"aliases"`
 }
 
+// ServiceAliasConfig contains all service aliases
 type ServiceAliasConfig struct {
 	Aliases []ServiceAlias
 }
