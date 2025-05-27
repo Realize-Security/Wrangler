@@ -110,7 +110,6 @@ Options:
 Notes:
   - Scope and exclude files should contain one IP/FQDN per line.
   - The --scan-patterns YAML file allows customization of Nmap options (e.g., ports, scan types).
-  - Use --discover to filter unresponsive hosts, which may optimize scan time.
   - Ensure the output directory exists and is writable when using --output.
   - If --log-file points to a directory, a timestamped log file will be created automatically.
   - Log output is written to both stdout and the log file when --log-file is specified.

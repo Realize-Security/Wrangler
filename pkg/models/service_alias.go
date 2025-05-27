@@ -6,7 +6,7 @@ import (
 )
 
 type ServiceAlias struct {
-	Service string   `yaml:"services"`
+	Service string   `yaml:"service"`
 	Aliases []string `yaml:"aliases"`
 }
 
