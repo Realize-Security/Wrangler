@@ -31,3 +31,4 @@ Currently only service discovery on TCP is supported. This will have to be exten
 3. Implement another layer of host discovery checking for at least one open port
 4. Investigate why scans are failing when no `sudo` is not used and relying on linux capabilities for nmap.
 5. Use state tracking to monitor for changing services?
+6. Implement ability to perforfm targeted termination of unhealthy scan PID without cascade on pgid healthy processes.
