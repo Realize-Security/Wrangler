@@ -1,6 +1,10 @@
 package models
 
-import "gopkg.in/yaml.v3"
+import (
+	"gopkg.in/yaml.v3"
+	"regexp"
+	"strings"
+)
 
 type ScanType string
 
@@ -12,6 +16,7 @@ type ScanItem struct {
 	ScanItem Scan `yaml:"scan-item"`
 }
 
+// Scan represents a scan configuration
 type Scan struct {
 	Tool             string   `yaml:"tool"`
 	Protocol         string   `yaml:"protocol"`
@@ -23,25 +28,24 @@ type Scan struct {
 	ScopeArg         string
 }
 
-// UnmarshalYAML implements the yaml.Unmarshaler interface
+// UnmarshalYAML implements the yaml.Unmarshaler interface for Scan
 func (s *Scan) UnmarshalYAML(value *yaml.Node) error {
-	// Create a temporary struct for unmarshaling
+	// Try to decode as a struct with args as interface{}
 	var temp struct {
-		Tool             string    `yaml:"tool"`
-		Protocol         string    `yaml:"protocol"`
-		TargetService    []string  `yaml:"services"`
-		Description      string    `yaml:"description"`
-		HostDiscovery    bool      `yaml:"host_discovery"`
-		ServiceDiscovery bool      `yaml:"service_discovery"`
-		ArgsRaw          yaml.Node `yaml:"args"`
+		Tool             string      `yaml:"tool"`
+		Protocol         string      `yaml:"protocol"`
+		ArgsRaw          interface{} `yaml:"args"`
+		TargetService    []string    `yaml:"services"`
+		Description      string      `yaml:"description"`
+		HostDiscovery    bool        `yaml:"host_discovery"`
+		ServiceDiscovery bool        `yaml:"service_discovery"`
 	}
 
-	// Unmarshal into the temporary struct
 	if err := value.Decode(&temp); err != nil {
 		return err
 	}
 
-	// Copy the regular fields
+	// Copy regular fields
 	s.Tool = temp.Tool
 	s.Protocol = temp.Protocol
 	s.TargetService = temp.TargetService
@@ -49,33 +53,63 @@ func (s *Scan) UnmarshalYAML(value *yaml.Node) error {
 	s.HostDiscovery = temp.HostDiscovery
 	s.ServiceDiscovery = temp.ServiceDiscovery
 
-	// Process the args field specially
-	var flattenArgs []string
-	if temp.ArgsRaw.Kind == yaml.SequenceNode {
-		flattenArgs = flattenSequence(temp.ArgsRaw.Content)
+	// Process args based on type
+	switch args := temp.ArgsRaw.(type) {
+	case string:
+		s.Args = parseArgs(args)
+	case []interface{}:
+		s.Args = flattenArgs(args)
+	default:
+		s.Args = []string{}
 	}
-	s.Args = flattenArgs
 
 	return nil
 }
 
-// Helper function to flatten nested sequences
-func flattenSequence(nodes []*yaml.Node) []string {
+// flattenArgs recursively flattens nested arrays and parses strings
+func flattenArgs(args []interface{}) []string {
 	var result []string
 
-	for _, node := range nodes {
-		// If this node is a sequence, recursively flatten it
-		if node.Kind == yaml.SequenceNode {
-			result = append(result, flattenSequence(node.Content)...)
-			continue
-		}
-
-		// Otherwise, treat it as a string
-		var str string
-		if err := node.Decode(&str); err == nil {
-			result = append(result, str)
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case string:
+			result = append(result, parseArgs(v)...)
+		case []interface{}:
+			result = append(result, flattenArgs(v)...)
 		}
 	}
 
 	return result
+}
+
+// parseArgs intelligently splits argument strings
+func parseArgs(argsStr string) []string {
+	var args []string
+
+	// Trim whitespace
+	argsStr = strings.TrimSpace(argsStr)
+	if argsStr == "" {
+		return args
+	}
+
+	// Regular expression to match either:
+	// 1. Single quoted strings (preserving content)
+	// 2. Double-quoted strings (preserving content)
+	// 3. Non-whitespace sequences
+	re := regexp.MustCompile(`'[^']*'|"[^"]*"|\S+`)
+
+	matches := re.FindAllString(argsStr, -1)
+
+	for _, match := range matches {
+		// Remove surrounding quotes if present, but keep the content intact
+		if (strings.HasPrefix(match, "'") && strings.HasSuffix(match, "'")) ||
+			(strings.HasPrefix(match, `"`) && strings.HasSuffix(match, `"`)) {
+			// Remove quotes but keep the content as a single argument
+			args = append(args, match[1:len(match)-1])
+		} else {
+			args = append(args, match)
+		}
+	}
+
+	return args
 }
