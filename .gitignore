@@ -31,3 +31,4 @@ discovered-*
 **/.temp-*
 ./.temp-*
 **/*.log
+./wrangler
