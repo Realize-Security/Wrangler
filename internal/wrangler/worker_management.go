@@ -6,7 +6,6 @@ import (
 	"Wrangler/pkg/helpers"
 	"Wrangler/pkg/models"
 	"fmt"
-	"github.com/shirou/gopsutil/v4/process"
 	"log"
 	"os"
 	"os/exec"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 // DiscoveryResponseMonitor reads `WorkerResponse` from each discovery worker.

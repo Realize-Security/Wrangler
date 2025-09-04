@@ -1,8 +1,9 @@
 package helpers
 
 import (
-	"github.com/google/uuid"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type UUID struct {
