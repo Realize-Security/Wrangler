@@ -262,7 +262,7 @@ func serviceMatches(service models.Service, targetServices []string) bool {
 }
 
 func setToolBinPath(scans []models.Scan) error {
-	// Create map of unique tools (pre-allocated)
+	// Create map of unique tools
 	uniqueTools := make(map[string]struct{}, len(scans))
 	for _, scan := range scans {
 		uniqueTools[scan.Tool] = struct{}{} // More efficient than bool
@@ -294,7 +294,7 @@ func setToolBinPath(scans []models.Scan) error {
 			strings.Join(missingBinaries, ", "))
 	}
 
-	// Properly update the original scans
+	// Update the original scans
 	for i := range scans {
 		if bin, ok := toolToBin[scans[i].Tool]; ok {
 			scans[i].Tool = bin.PathInPATH
