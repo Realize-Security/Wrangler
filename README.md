@@ -1,6 +1,6 @@
 # Wrangler
 
-An interface for running command line applications. Wrangler uses Golang's concurrency model (goroutines and channels) to execute commands and parse stdout, stderr and tool reports. Reports are typically required to be standardised format, like XML.
+An interface for running command line applications. Wrangler uses Golang's concurrency model to execute commands and parse stdout, stderr and tool reports. Reports are typically required to be standardised format, like XML.
 Wrangler attempts to use this model to optimise the execution of long-running CLI tasks such as Nmap, testssl.sh etc. Whilst these tasks finish quickly in small batches, if many thousands of targets are set, scans can take a LONG time!
 
 Wrangler attempts to do this by using a multi-stage process and pipeline. A single target set can be run over multiple concurrent pipelines divided into 'batches' of IP addresses or FQDNs. Note that if a CIDR block is specified, Wrangler will break out each possible individual IP address.
@@ -31,4 +31,4 @@ Currently only service discovery on TCP is supported. This will have to be exten
 3. Implement another layer of host discovery checking for at least one open port
 4. Investigate why scans are failing when no `sudo` is not used and relying on linux capabilities for nmap.
 5. Use state tracking to monitor for changing services?
-6. Implement ability to perforfm targeted termination of unhealthy scan PID without cascade on pgid healthy processes.
+6. Implement ability to perform targeted termination of unhealthy scan PID without cascade on pgid healthy processes.
