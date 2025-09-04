@@ -188,10 +188,10 @@ func (wr *wranglerRepository) setupInternal(project *models.Project) {
 
 // loadWorkers loads template and static scanner workers from YAML file
 func (wr *wranglerRepository) loadWorkers() {
-	hdw := make([]models.Worker, 0)
-	sdw := make([]models.Worker, 0)
-	static := make([]models.Worker, 0)
-	templated := make([]models.Worker, 0)
+	hostDiscoverWorkers := make([]models.Worker, 0)
+	serviceDiscoverWorkers := make([]models.Worker, 0)
+	staticWorkers := make([]models.Worker, 0)
+	templatedWorkers := make([]models.Worker, 0)
 
 	scans, aliases, scoping, err := serializers.LoadScansFromYAML(wr.cli.PatternFile)
 	if err != nil {
@@ -226,27 +226,27 @@ func (wr *wranglerRepository) loadWorkers() {
 
 	for _, worker := range workers {
 		if worker.IsHostDiscovery {
-			hdw = append(hdw, worker)
+			hostDiscoverWorkers = append(hostDiscoverWorkers, worker)
 		} else if worker.IsServiceDiscovery {
-			sdw = append(sdw, worker)
+			serviceDiscoverWorkers = append(serviceDiscoverWorkers, worker)
 		} else if portsAreHardcoded(&worker) {
-			static = append(static, worker)
+			staticWorkers = append(staticWorkers, worker)
 		} else {
-			templated = append(templated, worker)
+			templatedWorkers = append(templatedWorkers, worker)
 		}
 	}
 
-	wr.hostDiscoveryWorkers.AddAll(hdw)
-	log.Printf("[*] Loaded %d host discovery workers", len(hdw))
+	wr.hostDiscoveryWorkers.AddAll(hostDiscoverWorkers)
+	log.Printf("[*] Loaded %d host discovery workers", len(hostDiscoverWorkers))
 
-	wr.serviceDiscoveryWorkers.AddAll(sdw)
-	log.Printf("[*] Loaded %d service discovery workers", len(sdw))
+	wr.serviceDiscoveryWorkers.AddAll(serviceDiscoverWorkers)
+	log.Printf("[*] Loaded %d service discovery workers", len(serviceDiscoverWorkers))
 
-	wr.staticWorkers.AddAll(static)
-	log.Printf("[*] Loaded %d static workers", len(static))
+	wr.staticWorkers.AddAll(staticWorkers)
+	log.Printf("[*] Loaded %d staticWorkers workers", len(staticWorkers))
 
-	wr.templateWorkers.AddAll(templated)
-	log.Printf("[*] Loaded %d templated workers", len(templated))
+	wr.templateWorkers.AddAll(templatedWorkers)
+	log.Printf("[*] Loaded %d templatedWorkers workers", len(templatedWorkers))
 }
 
 func initializeServiceAliases(aliases []models.ServiceAlias) {
